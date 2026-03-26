@@ -67,7 +67,7 @@ import { useToast } from '@/components/ui/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { getAllComplaints } from '@/services/complaints.service';
 import { getDashboardStats, getDepartmentPerformance } from '@/services/stats.service';
-import { getAllUsers, getUserCounts, updateUserRole, updateUserActiveStatus } from '@/services/users.service';
+import { getAllUsers, getUserCounts, updateUserRole, updateUserActiveStatus, getPendingOfficerRequests, OfficerRequest, approveOfficerRequest, rejectOfficerRequest } from '@/services/users.service';
 import { Complaint, User as UserType, DEPARTMENTS, DISTRICTS, STATUS_LABELS, PRIORITY_LABELS } from '@/lib/types';
 import { formatDate, exportToCSV } from '@/lib/utils';
 
@@ -82,6 +82,8 @@ export default function AdminPanel() {
   const [searchQuery, setSearchQuery] = useState('');
   const [isUserDialogOpen, setIsUserDialogOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState<UserType | null>(null);
+  const [pendingOfficerRequests, setPendingOfficerRequests] = useState<OfficerRequest[]>([]);
+  const [isProcessingRequest, setIsProcessingRequest] = useState<string | null>(null);
 
   const router = useRouter();
   const { toast } = useToast();
@@ -105,11 +107,12 @@ export default function AdminPanel() {
   const fetchData = async () => {
     setIsLoading(true);
     try {
-      const [complaintsData, statsData, usersData, userCounts] = await Promise.all([
+      const [complaintsData, statsData, usersData, userCounts, pendingRequests] = await Promise.all([
         getAllComplaints(),
         getDashboardStats(),
         getAllUsers(),
         getUserCounts(),
+        getPendingOfficerRequests(),
       ]);
       setComplaints(complaintsData.complaints);
       setStats({
@@ -118,11 +121,13 @@ export default function AdminPanel() {
         activeOfficers: userCounts.activeOfficers,
       });
       setUsers(usersData as UserType[]);
+      setPendingOfficerRequests(pendingRequests);
     } catch (error) {
       console.error('Error fetching data:', error);
       setComplaints([]);
       setStats(null);
       setUsers([]);
+      setPendingOfficerRequests([]);
     } finally {
       setIsLoading(false);
     }
@@ -291,7 +296,7 @@ export default function AdminPanel() {
 
         {/* Main Tabs */}
         <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="grid w-full grid-cols-4 max-w-lg mb-6">
+          <TabsList className="grid w-full grid-cols-5 max-w-2xl mb-6">
             <TabsTrigger value="overview">
               <BarChart3 className="h-4 w-4 mr-2" />
               Overview
@@ -303,6 +308,14 @@ export default function AdminPanel() {
             <TabsTrigger value="users">
               <Users className="h-4 w-4 mr-2" />
               Users
+            </TabsTrigger>
+            <TabsTrigger value="requests">
+              <Shield className="h-4 w-4 mr-2" />
+              Requests {pendingOfficerRequests.length > 0 && (
+                <span className="ml-1 bg-red-500 text-white text-xs rounded-full px-1.5">
+                  {pendingOfficerRequests.length}
+                </span>
+              )}
             </TabsTrigger>
             <TabsTrigger value="settings">
               <Settings className="h-4 w-4 mr-2" />
@@ -538,6 +551,133 @@ export default function AdminPanel() {
                     </div>
                   ))}
                 </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Officer Requests Tab */}
+          <TabsContent value="requests" className="space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Shield className="h-5 w-5" />
+                  Pending Officer Registration Requests
+                </CardTitle>
+                <CardDescription>
+                  Review and approve officer registration requests
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {pendingOfficerRequests.length === 0 ? (
+                  <div className="text-center py-12">
+                    <Shield className="h-12 w-12 mx-auto text-gray-300 mb-4" />
+                    <p className="text-gray-500">No pending requests</p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {pendingOfficerRequests.map((request) => (
+                      <div
+                        key={request.id}
+                        className="border rounded-lg p-4 hover:shadow-md transition-shadow"
+                      >
+                        <div className="flex flex-col md:flex-row justify-between gap-4">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-3 mb-2">
+                              <Avatar className="h-10 w-10">
+                                <AvatarFallback className="bg-primary/10 text-primary">
+                                  {request.displayName.charAt(0)}
+                                </AvatarFallback>
+                              </Avatar>
+                              <div>
+                                <h3 className="font-semibold">{request.displayName}</h3>
+                                <p className="text-sm text-gray-500">{request.email}</p>
+                              </div>
+                            </div>
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-3 text-sm">
+                              <div>
+                                <span className="text-gray-500">Employee ID:</span>
+                                <p className="font-medium">{request.employeeId}</p>
+                              </div>
+                              <div>
+                                <span className="text-gray-500">Department:</span>
+                                <p className="font-medium">{request.department}</p>
+                              </div>
+                              <div>
+                                <span className="text-gray-500">Designation:</span>
+                                <p className="font-medium">{request.designation}</p>
+                              </div>
+                              <div>
+                                <span className="text-gray-500">District:</span>
+                                <p className="font-medium">{request.district}</p>
+                              </div>
+                            </div>
+                            <div className="mt-2 text-sm text-gray-500">
+                              <Clock className="inline h-3 w-3 mr-1" />
+                              Submitted: {formatDate(request.submittedAt)}
+                            </div>
+                          </div>
+                          <div className="flex flex-col gap-2">
+                            <Button
+                              size="sm"
+                              disabled={isProcessingRequest === request.id}
+                              onClick={async () => {
+                                setIsProcessingRequest(request.id);
+                                const result = await approveOfficerRequest(request.id, user?.uid || '');
+                                if (result.success) {
+                                  toast({
+                                    title: 'Request Approved',
+                                    description: `Officer account created. Password: ${result.generatedPassword}`,
+                                  });
+                                  fetchData();
+                                } else {
+                                  toast({
+                                    title: 'Error',
+                                    description: result.error || 'Failed to approve request',
+                                    variant: 'destructive',
+                                  });
+                                }
+                                setIsProcessingRequest(null);
+                              }}
+                            >
+                              {isProcessingRequest === request.id ? (
+                                <Loader2 className="h-4 w-4 animate-spin mr-1" />
+                              ) : (
+                                <CheckCircle2 className="h-4 w-4 mr-1" />
+                              )}
+                              Approve
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="destructive"
+                              disabled={isProcessingRequest === request.id}
+                              onClick={async () => {
+                                setIsProcessingRequest(request.id);
+                                const result = await rejectOfficerRequest(request.id, user?.uid || '', 'Rejected by admin');
+                                if (result.success) {
+                                  toast({
+                                    title: 'Request Rejected',
+                                    description: 'Officer registration request has been rejected',
+                                  });
+                                  fetchData();
+                                } else {
+                                  toast({
+                                    title: 'Error',
+                                    description: result.error || 'Failed to reject request',
+                                    variant: 'destructive',
+                                  });
+                                }
+                                setIsProcessingRequest(null);
+                              }}
+                            >
+                              <Trash2 className="h-4 w-4 mr-1" />
+                              Reject
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </CardContent>
             </Card>
           </TabsContent>

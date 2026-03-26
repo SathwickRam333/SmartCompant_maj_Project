@@ -31,6 +31,30 @@ import {
 import { generateTrackingId, calculateSLADeadline } from '@/lib/utils';
 import { classifyComplaint } from './ai.service';
 
+// Helper to safely convert Timestamp/Date to valid Date object
+function toSafeDate(value: any): Date {
+  if (!value) return new Date();
+  
+  try {
+    // Handle Firestore Timestamp
+    if (value?.toDate && typeof value.toDate === 'function') {
+      const date = value.toDate();
+      return isNaN(date.getTime()) ? new Date() : date;
+    }
+    
+    // Handle Date object
+    if (value instanceof Date) {
+      return isNaN(value.getTime()) ? new Date() : value;
+    }
+    
+    // Handle string or number
+    const date = new Date(value);
+    return isNaN(date.getTime()) ? new Date() : date;
+  } catch {
+    return new Date();
+  }
+}
+
 // Create a new complaint
 export async function createComplaint(
   formData: ComplaintFormData,
@@ -174,35 +198,61 @@ export async function getCitizenComplaints(
   }
 }
 
-// Get complaints for officer
+// Get complaints for officer (both assigned and unassigned for officer to pick up)
 export async function getOfficerComplaints(
   officerId: string,
   status?: ComplaintStatus,
   lastDoc?: DocumentSnapshot,
-  pageSize: number = 20
+  pageSize: number = 50
 ): Promise<{ complaints: Complaint[]; lastDoc: DocumentSnapshot | null }> {
   try {
-    const constraints: QueryConstraint[] = [
+    // First, get complaints assigned to this officer
+    const assignedConstraints: QueryConstraint[] = [
       where('assignedOfficerId', '==', officerId),
+      orderBy('createdAt', 'desc'),
+    ];
+
+    // Also get unassigned complaints (pending or in-progress without officer)
+    const unassignedConstraints: QueryConstraint[] = [
+      where('status', 'in', ['pending', 'in-progress', 'under-review']),
       orderBy('createdAt', 'desc'),
       limit(pageSize),
     ];
 
+    const [assignedSnapshot, unassignedSnapshot] = await Promise.all([
+      getDocs(query(collection(db, 'complaints'), ...assignedConstraints)),
+      getDocs(query(collection(db, 'complaints'), ...unassignedConstraints)),
+    ]);
+
+    // Combine and deduplicate
+    const complaintMap = new Map<string, Complaint>();
+    
+    assignedSnapshot.docs.forEach(doc => {
+      const complaint = parseComplaintDoc(doc);
+      complaintMap.set(complaint.id, complaint);
+    });
+    
+    unassignedSnapshot.docs.forEach(doc => {
+      const complaint = parseComplaintDoc(doc);
+      // Only add unassigned complaints (no assignedOfficerId or empty)
+      if (!complaint.assignedOfficerId) {
+        complaintMap.set(complaint.id, complaint);
+      }
+    });
+
+    // Convert to array and sort by createdAt desc
+    let complaints = Array.from(complaintMap.values())
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+    // Apply status filter if provided
     if (status) {
-      constraints.splice(1, 0, where('status', '==', status));
+      complaints = complaints.filter(c => c.status === status);
     }
 
-    if (lastDoc) {
-      constraints.push(startAfter(lastDoc));
-    }
+    // Apply pagination
+    complaints = complaints.slice(0, pageSize);
 
-    const q = query(collection(db, 'complaints'), ...constraints);
-    const snapshot = await getDocs(q);
-
-    const complaints = snapshot.docs.map(parseComplaintDoc);
-    const newLastDoc = snapshot.docs[snapshot.docs.length - 1] || null;
-
-    return { complaints, lastDoc: newLastDoc };
+    return { complaints, lastDoc: null };
   } catch (error) {
     console.error('Error getting officer complaints:', error);
     return { complaints: [], lastDoc: null };
@@ -344,6 +394,38 @@ export async function addResolution(
   }
 }
 
+// Assign complaint to officer
+export async function assignComplaintToOfficer(
+  complaintId: string,
+  officerId: string,
+  officerName: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    await updateDoc(doc(db, 'complaints', complaintId), {
+      assignedOfficerId: officerId,
+      assignedOfficerName: officerName,
+      status: 'in-progress',
+      updatedAt: serverTimestamp(),
+    });
+
+    // Add update record
+    await addDoc(collection(db, 'updates'), {
+      complaintId,
+      officerId,
+      officerName,
+      status: 'in-progress',
+      comment: `Complaint assigned to ${officerName}`,
+      attachments: [],
+      createdAt: serverTimestamp(),
+    });
+
+    return { success: true };
+  } catch (error: any) {
+    console.error('Error assigning complaint:', error);
+    return { success: false, error: error.message };
+  }
+}
+
 // Submit feedback
 export async function submitFeedback(
   complaintId: string,
@@ -383,7 +465,7 @@ export async function getComplaintUpdates(complaintId: string): Promise<Complain
     return snapshot.docs.map(doc => ({
       id: doc.id,
       ...doc.data(),
-      createdAt: (doc.data().createdAt as Timestamp)?.toDate() || new Date(),
+      createdAt: toSafeDate(doc.data().createdAt),
     })) as ComplaintUpdate[];
   } catch (error) {
     console.error('Error getting complaint updates:', error);
@@ -457,13 +539,23 @@ async function updateStats(status: ComplaintStatus, department: string): Promise
 // Parse complaint document
 function parseComplaintDoc(doc: DocumentSnapshot): Complaint {
   const data = doc.data()!;
+  
+  // Helper to safely convert any date format to string ISO
+  const toDateString = (value: any): string => {
+    if (!value) return new Date().toISOString();
+    if (value instanceof Date) return value.toISOString();
+    if (typeof value === 'string') return value;
+    if (value?.toDate) return value.toDate().toISOString(); // Firestore Timestamp
+    return new Date().toISOString();
+  };
+  
   return {
     id: doc.id,
     ...data,
-    createdAt: (data.createdAt as Timestamp)?.toDate() || new Date(),
-    updatedAt: (data.updatedAt as Timestamp)?.toDate() || new Date(),
-    slaDeadline: (data.slaDeadline as Timestamp)?.toDate() || new Date(),
-    resolvedAt: data.resolvedAt ? (data.resolvedAt as Timestamp)?.toDate() : undefined,
+    createdAt: toDateString(data.createdAt),
+    updatedAt: toDateString(data.updatedAt),
+    slaDeadline: toDateString(data.slaDeadline),
+    resolvedAt: data.resolvedAt ? toDateString(data.resolvedAt) : undefined,
   } as Complaint;
 }
 

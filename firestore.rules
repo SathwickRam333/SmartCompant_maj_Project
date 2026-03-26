@@ -60,13 +60,13 @@ service cloud.firestore {
       
       // Only admins can delete complaints
       allow delete: if isAdmin();
-      
-      // Subcollection for complaint updates/history
-      match /updates/{updateId} {
-        allow read: if isAuthenticated();
-        allow create: if isOfficer();
-        allow update, delete: if isAdmin();
-      }
+    }
+    
+    // Complaint updates/history (top-level collection)
+    match /updates/{updateId} {
+      allow read: if isAuthenticated();
+      allow create: if isOfficer();
+      allow update, delete: if isAdmin();
     }
     
     // Departments collection (read-only for most users)
@@ -110,6 +110,15 @@ service cloud.firestore {
       allow create: if isAuthenticated();
       allow update: if isAdmin();
       allow delete: if isAdmin();
+    }
+    
+    // Pending officer registration requests
+    match /pending_officer_requests/{requestId} {
+      // Unauthenticated users can create requests (they don't have accounts yet)
+      allow create: if true;
+      
+      // Only admins can read, update, or delete requests
+      allow read, update, delete: if isAdmin();
     }
   }
 }

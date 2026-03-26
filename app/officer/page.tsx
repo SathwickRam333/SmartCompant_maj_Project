@@ -47,7 +47,7 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Separator } from '@/components/ui/separator';
 import { useToast } from '@/components/ui/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
-import { getOfficerComplaints, updateComplaintStatus, addResolution } from '@/services/complaints.service';
+import { getOfficerComplaints, updateComplaintStatus, addResolution, assignComplaintToOfficer } from '@/services/complaints.service';
 import { Complaint, STATUS_LABELS, PRIORITY_LABELS, ComplaintStatus } from '@/lib/types';
 import { formatDate, formatRelativeTime, isOverdue } from '@/lib/utils';
 
@@ -169,6 +169,31 @@ export default function OfficerDashboard() {
       });
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleClaimComplaint = async (complaint: Complaint) => {
+    try {
+      const result = await assignComplaintToOfficer(
+        complaint.id,
+        user?.uid || '',
+        user?.displayName || 'Officer'
+      );
+      if (result.success) {
+        toast({
+          title: 'Complaint Claimed',
+          description: `You are now assigned to complaint ${complaint.trackingId}`,
+        });
+        fetchComplaints();
+      } else {
+        throw new Error(result.error);
+      }
+    } catch (error) {
+      toast({
+        title: 'Error',
+        description: 'Could not claim complaint',
+        variant: 'destructive',
+      });
     }
   };
 
@@ -396,9 +421,19 @@ export default function OfficerDashboard() {
                           <Eye className="h-4 w-4 mr-1" />
                           View Details
                         </Button>
-                        {complaint.status !== 'resolved' && (
+                        {complaint.status !== 'resolved' && complaint.status !== 'closed' && (
                           <div className="flex gap-2">
-                            {complaint.status === 'under_review' && (
+                            {/* Claim button for unassigned complaints */}
+                            {!complaint.assignedOfficerId && (
+                              <Button
+                                size="sm"
+                                variant="default"
+                                onClick={() => handleClaimComplaint(complaint)}
+                              >
+                                Claim
+                              </Button>
+                            )}
+                            {complaint.assignedOfficerId === user?.uid && (complaint.status === 'submitted' || complaint.status === 'under_review') && (
                               <Button
                                 size="sm"
                                 variant="secondary"
@@ -407,7 +442,7 @@ export default function OfficerDashboard() {
                                 Start Work
                               </Button>
                             )}
-                            {complaint.status === 'in_progress' && (
+                            {complaint.assignedOfficerId === user?.uid && complaint.status === 'in_progress' && (
                               <Button
                                 size="sm"
                                 onClick={() => {
@@ -539,11 +574,20 @@ export default function OfficerDashboard() {
                   onChange={(e) => setResolution(e.target.value)}
                 />
               </div>
-              <div>
-                <Label>Upload After Images (Optional)</Label>
-                <div className="border-2 border-dashed rounded-lg p-4 text-center cursor-pointer hover:bg-gray-50">
-                  <Camera className="h-6 w-6 mx-auto text-gray-400 mb-2" />
-                  <p className="text-sm text-gray-500">Click to upload images</p>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label>Before Photo (Optional)</Label>
+                  <div className="border-2 border-dashed rounded-lg p-4 text-center cursor-pointer hover:bg-gray-50">
+                    <Camera className="h-6 w-6 mx-auto text-gray-400 mb-2" />
+                    <p className="text-sm text-gray-500">Upload before image</p>
+                  </div>
+                </div>
+                <div>
+                  <Label>After Photo (Optional)</Label>
+                  <div className="border-2 border-dashed rounded-lg p-4 text-center cursor-pointer hover:bg-gray-50">
+                    <Camera className="h-6 w-6 mx-auto text-gray-400 mb-2" />
+                    <p className="text-sm text-gray-500">Upload after image</p>
+                  </div>
                 </div>
               </div>
             </div>

@@ -22,8 +22,24 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/components/ui/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
-import { chatWithAssistant } from '@/services/ai.service';
 import { ChatMessage } from '@/lib/types';
+
+// Chat API function
+async function sendChatMessage(messages: { role: string; content: string }[], language: string = 'en') {
+  const response = await fetch('/api/chat', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ messages, language }),
+  });
+
+  if (!response.ok) {
+    throw new Error('Failed to send message');
+  }
+
+  return response.json();
+}
 
 const quickActions = [
   {
@@ -99,13 +115,13 @@ export default function ChatbotPage() {
     setIsLoading(true);
 
     try {
-      // Convert messages to format expected by AI service (include the new user message)
+      // Convert messages to format expected by API (include the new user message)
       const conversationHistory = [...messages, userMessage].map((msg) => ({
         role: msg.role as 'user' | 'assistant',
         content: msg.content,
       }));
 
-      const response = await chatWithAssistant(conversationHistory);
+      const response = await sendChatMessage(conversationHistory);
 
       if (response.message) {
         const assistantMessage: ChatMessage = {
@@ -220,7 +236,7 @@ export default function ChatbotPage() {
             <Sparkles className="h-8 w-8 text-white" />
           </div>
           <h1 className="text-3xl font-bold text-primary mb-2">Clod.AI</h1>
-          <p className="text-gray-600">Your AI-Powered Grievance Assistant</p>
+          <p className="text-gray-600 text-lg">AI Powered Grievance Assistant</p>
           <Badge variant="secondary" className="mt-2">
             Powered by GPT-3.5 Turbo
           </Badge>

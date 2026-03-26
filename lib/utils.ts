@@ -15,14 +15,18 @@ export function generateTrackingId(): string {
 }
 
 // Format date for display
-export function formatDate(date: Date | string): string {
+export function formatDate(date: Date | string | undefined | null): string {
+  if (!date) return 'N/A';
   const d = typeof date === 'string' ? new Date(date) : date;
+  if (isNaN(d.getTime())) return 'Invalid Date';
   return format(d, 'dd MMM yyyy, hh:mm a');
 }
 
 // Format relative time
-export function formatRelativeTime(date: Date | string): string {
+export function formatRelativeTime(date: Date | string | undefined | null): string {
+  if (!date) return 'N/A';
   const d = typeof date === 'string' ? new Date(date) : date;
+  if (isNaN(d.getTime())) return 'Invalid Date';
   return formatDistanceToNow(d, { addSuffix: true });
 }
 
@@ -33,8 +37,10 @@ export function calculateSLADeadline(priority: Priority, createdAt: Date = new D
 }
 
 // Check if complaint is overdue
-export function isOverdue(deadline: Date | string): boolean {
+export function isOverdue(deadline: Date | string | undefined | null): boolean {
+  if (!deadline) return false;
   const d = typeof deadline === 'string' ? new Date(deadline) : deadline;
+  if (isNaN(d.getTime())) return false;
   return new Date() > d;
 }
 

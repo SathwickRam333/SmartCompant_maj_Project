@@ -15,6 +15,30 @@ import { db } from '@/firebase/config';
 import { DashboardStats, MonthlyTrend, ComplaintStatus, Priority } from '@/lib/types';
 import { subMonths, format, startOfMonth, endOfMonth } from 'date-fns';
 
+// Helper to safely convert Timestamp/Date to valid Date object
+function toSafeDate(value: any): Date | null {
+  if (!value) return null;
+  
+  try {
+    // Handle Firestore Timestamp
+    if (value?.toDate && typeof value.toDate === 'function') {
+      const date = value.toDate();
+      return isNaN(date.getTime()) ? null : date;
+    }
+    
+    // Handle Date object
+    if (value instanceof Date) {
+      return isNaN(value.getTime()) ? null : value;
+    }
+    
+    // Handle string or number
+    const date = new Date(value);
+    return isNaN(date.getTime()) ? null : date;
+  } catch {
+    return null;
+  }
+}
+
 // Get dashboard statistics
 export async function getDashboardStats(): Promise<DashboardStats> {
   try {
@@ -89,10 +113,12 @@ async function calculateStats(): Promise<DashboardStats> {
       
       // Calculate resolution time
       if (data.resolvedAt && data.createdAt) {
-        const createdAt = (data.createdAt as Timestamp).toDate();
-        const resolvedAt = (data.resolvedAt as Timestamp).toDate();
-        const days = Math.ceil((resolvedAt.getTime() - createdAt.getTime()) / (1000 * 60 * 60 * 24));
-        resolutionTimes.push(days);
+        const createdAt = toSafeDate(data.createdAt);
+        const resolvedAt = toSafeDate(data.resolvedAt);
+        if (createdAt && resolvedAt) {
+          const days = Math.ceil((resolvedAt.getTime() - createdAt.getTime()) / (1000 * 60 * 60 * 24));
+          resolutionTimes.push(days);
+        }
       }
     } else if (status === 'closed') {
       stats.closedComplaints++;
@@ -102,8 +128,8 @@ async function calculateStats(): Promise<DashboardStats> {
     
     // Check for overdue complaints
     if (data.slaDeadline && status !== 'resolved' && status !== 'closed' && status !== 'rejected') {
-      const slaDeadline = (data.slaDeadline as Timestamp).toDate();
-      if (slaDeadline < now) {
+      const slaDeadline = toSafeDate(data.slaDeadline);
+      if (slaDeadline && slaDeadline < now) {
         stats.overdueComplaints++;
       }
     }
@@ -124,18 +150,20 @@ async function calculateStats(): Promise<DashboardStats> {
 
     // Monthly trends
     if (data.createdAt) {
-      const createdAt = (data.createdAt as Timestamp).toDate();
-      const monthKey = format(createdAt, 'yyyy-MM');
-      
-      if (!monthlyData[monthKey]) {
-        monthlyData[monthKey] = { total: 0, resolved: 0, pending: 0 };
-      }
-      monthlyData[monthKey].total++;
-      
-      if (status === 'resolved' || status === 'closed') {
-        monthlyData[monthKey].resolved++;
-      } else {
-        monthlyData[monthKey].pending++;
+      const createdAt = toSafeDate(data.createdAt);
+      if (createdAt) {
+        const monthKey = format(createdAt, 'yyyy-MM');
+        
+        if (!monthlyData[monthKey]) {
+          monthlyData[monthKey] = { total: 0, resolved: 0, pending: 0 };
+        }
+        monthlyData[monthKey].total++;
+        
+        if (status === 'resolved' || status === 'closed') {
+          monthlyData[monthKey].resolved++;
+        } else {
+          monthlyData[monthKey].pending++;
+        }
       }
     }
   });
@@ -261,15 +289,17 @@ export async function getDepartmentPerformance(): Promise<Array<{
         deptData[dept].resolved++;
         
         if (data.resolvedAt && data.createdAt && data.slaDeadline) {
-          const resolvedAt = (data.resolvedAt as Timestamp).toDate();
-          const createdAt = (data.createdAt as Timestamp).toDate();
-          const deadline = (data.slaDeadline as Timestamp).toDate();
+          const resolvedAt = toSafeDate(data.resolvedAt);
+          const createdAt = toSafeDate(data.createdAt);
+          const deadline = toSafeDate(data.slaDeadline);
           
-          const days = Math.ceil((resolvedAt.getTime() - createdAt.getTime()) / (1000 * 60 * 60 * 24));
-          deptData[dept].resolutionTimes.push(days);
-          
-          if (resolvedAt <= deadline) {
-            deptData[dept].onTime++;
+          if (resolvedAt && createdAt && deadline) {
+            const days = Math.ceil((resolvedAt.getTime() - createdAt.getTime()) / (1000 * 60 * 60 * 24));
+            deptData[dept].resolutionTimes.push(days);
+            
+            if (resolvedAt <= deadline) {
+              deptData[dept].onTime++;
+            }
           }
         }
       } else if (status !== 'rejected') {
@@ -324,7 +354,7 @@ export async function getRecentActivity(
         title: data.title,
         status: data.status,
         department: data.department,
-        updatedAt: (data.updatedAt as Timestamp)?.toDate() || new Date(),
+        updatedAt: toSafeDate(data.updatedAt) || new Date(),
       };
     });
   } catch (error) {

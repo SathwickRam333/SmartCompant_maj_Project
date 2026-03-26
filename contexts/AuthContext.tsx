@@ -7,6 +7,30 @@ import { db } from '@/firebase/config';
 import { onAuthStateChange, getCurrentUser, signOutUser } from '@/services/auth.service';
 import { User } from '@/lib/types';
 
+// Helper to safely convert Timestamp/Date to valid Date object
+function toSafeDate(value: any): Date {
+  if (!value) return new Date();
+  
+  try {
+    // Handle Firestore Timestamp
+    if (value?.toDate && typeof value.toDate === 'function') {
+      const date = value.toDate();
+      return isNaN(date.getTime()) ? new Date() : date;
+    }
+    
+    // Handle Date object
+    if (value instanceof Date) {
+      return isNaN(value.getTime()) ? new Date() : value;
+    }
+    
+    // Handle string or number
+    const date = new Date(value);
+    return isNaN(date.getTime()) ? new Date() : date;
+  } catch {
+    return new Date();
+  }
+}
+
 interface AuthContextType {
   user: User | null;
   firebaseUser: FirebaseUser | null;
@@ -42,8 +66,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           role: userData.role,
           department: userData.department,
           district: userData.district,
-          createdAt: userData.createdAt?.toDate() || new Date(),
-          updatedAt: userData.updatedAt?.toDate() || new Date(),
+          createdAt: toSafeDate(userData.createdAt),
+          updatedAt: toSafeDate(userData.updatedAt),
           isActive: userData.isActive,
           language: userData.language || 'en',
         };
