@@ -1,0 +1,47 @@
+<svg width="800" height="200" viewBox="0 0 800 200" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Step 1: Register -->
+  <g transform="translate(0, 40)">
+    <circle cx="80" cy="60" r="40" fill="#1a472a"/>
+    <text x="80" y="68" font-family="Arial" font-size="24" fill="white" text-anchor="middle">1</text>
+    <rect x="40" y="110" width="80" height="50" rx="8" fill="#f0fdf4" stroke="#1a472a" stroke-width="2"/>
+    <rect x="50" y="120" width="60" height="8" rx="2" fill="#1a472a"/>
+    <rect x="50" y="135" width="40" height="8" rx="2" fill="#22c55e"/>
+  </g>
+  
+  <!-- Arrow 1 -->
+  <path d="M140 100 L180 100" stroke="#f59e0b" stroke-width="3" stroke-dasharray="5,5"/>
+  <polygon points="180,95 195,100 180,105" fill="#f59e0b"/>
+  
+  <!-- Step 2: Submit -->
+  <g transform="translate(200, 40)">
+    <circle cx="80" cy="60" r="40" fill="#1a472a"/>
+    <text x="80" y="68" font-family="Arial" font-size="24" fill="white" text-anchor="middle">2</text>
+    <rect x="40" y="110" width="80" height="50" rx="8" fill="#f0fdf4" stroke="#1a472a" stroke-width="2"/>
+    <path d="M60 130 L100 130 M60 140 L90 140 M60 150 L95 150" stroke="#1a472a" stroke-width="2"/>
+  </g>
+  
+  <!-- Arrow 2 -->
+  <path d="M340 100 L380 100" stroke="#f59e0b" stroke-width="3" stroke-dasharray="5,5"/>
+  <polygon points="380,95 395,100 380,105" fill="#f59e0b"/>
+  
+  <!-- Step 3: AI Classification -->
+  <g transform="translate(400, 40)">
+    <circle cx="80" cy="60" r="40" fill="#1a472a"/>
+    <text x="80" y="68" font-family="Arial" font-size="24" fill="white" text-anchor="middle">3</text>
+    <rect x="40" y="110" width="80" height="50" rx="8" fill="#f0fdf4" stroke="#1a472a" stroke-width="2"/>
+    <circle cx="80" cy="135" r="15" fill="#22c55e"/>
+    <text x="80" y="140" font-family="Arial" font-size="10" fill="white" text-anchor="middle">AI</text>
+  </g>
+  
+  <!-- Arrow 3 -->
+  <path d="M540 100 L580 100" stroke="#f59e0b" stroke-width="3" stroke-dasharray="5,5"/>
+  <polygon points="580,95 595,100 580,105" fill="#f59e0b"/>
+  
+  <!-- Step 4: Track & Resolve -->
+  <g transform="translate(600, 40)">
+    <circle cx="80" cy="60" r="40" fill="#1a472a"/>
+    <text x="80" y="68" font-family="Arial" font-size="24" fill="white" text-anchor="middle">4</text>
+    <rect x="40" y="110" width="80" height="50" rx="8" fill="#f0fdf4" stroke="#1a472a" stroke-width="2"/>
+    <path d="M55 135 L70 150 L105 115" stroke="#22c55e" stroke-width="4" fill="none" stroke-linecap="round"/>
+  </g>
+</svg>

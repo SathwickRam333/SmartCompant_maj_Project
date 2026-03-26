@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+  <!-- Telangana Emblem Simplified -->
+  <defs>
+    <linearGradient id="goldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#f59e0b"/>
+      <stop offset="100%" style="stop-color:#d97706"/>
+    </linearGradient>
+  </defs>
+  
+  <!-- Outer circle -->
+  <circle cx="100" cy="100" r="95" fill="none" stroke="url(#goldGrad)" stroke-width="4"/>
+  
+  <!-- Inner shield shape -->
+  <path d="M100 20 L160 50 L160 110 Q160 160 100 185 Q40 160 40 110 L40 50 Z" 
+        fill="#1a472a" stroke="url(#goldGrad)" stroke-width="2"/>
+  
+  <!-- Kakatiya Thoranam (Gateway) simplified -->
+  <rect x="70" y="60" width="60" height="8" fill="#f59e0b" rx="2"/>
+  <rect x="75" y="68" width="10" height="50" fill="#f59e0b"/>
+  <rect x="115" y="68" width="10" height="50" fill="#f59e0b"/>
+  <path d="M80 68 L100 45 L120 68" fill="none" stroke="#f59e0b" stroke-width="4"/>
+  
+  <!-- Charminar towers simplified -->
+  <rect x="88" y="80" width="6" height="35" fill="#f59e0b"/>
+  <rect x="106" y="80" width="6" height="35" fill="#f59e0b"/>
+  
+  <!-- Arch -->
+  <path d="M85 115 Q100 95 115 115" fill="none" stroke="#f59e0b" stroke-width="3"/>
+  
+  <!-- Base -->
+  <rect x="75" y="118" width="50" height="6" fill="#f59e0b" rx="1"/>
+  
+  <!-- Decorative elements -->
+  <circle cx="100" cy="140" r="8" fill="#f59e0b"/>
+  <circle cx="100" cy="140" r="4" fill="#1a472a"/>
+  
+  <!-- Stars -->
+  <circle cx="55" cy="85" r="4" fill="#f59e0b"/>
+  <circle cx="145" cy="85" r="4" fill="#f59e0b"/>
+  
+  <!-- Text ribbon area -->
+  <path d="M50 155 Q100 145 150 155 L150 170 Q100 180 50 170 Z" fill="#f59e0b"/>
+  <text x="100" y="166" font-family="Arial, sans-serif" font-size="10" font-weight="bold" 
+        fill="#1a472a" text-anchor="middle">TELANGANA</text>
+</svg>
