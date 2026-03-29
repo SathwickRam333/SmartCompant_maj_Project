@@ -31,6 +31,20 @@ import {
 import { generateTrackingId, calculateSLADeadline } from '@/lib/utils';
 import { classifyComplaint } from './ai.service';
 
+function normalizeDepartmentName(value?: string): string {
+  const raw = (value || '').toLowerCase().trim();
+  if (!raw) return '';
+
+  if (raw === 'municipal administration' || raw === 'it & communications') {
+    return 'municipal';
+  }
+  if (raw === 'roads and buildings') {
+    return 'roads & buildings';
+  }
+
+  return raw;
+}
+
 // Helper to safely convert Timestamp/Date to valid Date object
 function toSafeDate(value: any): Date {
   if (!value) return new Date();
@@ -206,55 +220,87 @@ export async function getOfficerComplaints(
   pageSize: number = 50
 ): Promise<{ complaints: Complaint[]; lastDoc: DocumentSnapshot | null }> {
   try {
-    // First, get complaints assigned to this officer
-    const assignedConstraints: QueryConstraint[] = [
-      where('assignedOfficerId', '==', officerId),
-      orderBy('createdAt', 'desc'),
-    ];
-
-    // Also get unassigned complaints (pending or in-progress without officer)
-    const unassignedConstraints: QueryConstraint[] = [
-      where('status', 'in', ['pending', 'in-progress', 'under-review']),
-      orderBy('createdAt', 'desc'),
-      limit(pageSize),
-    ];
-
-    const [assignedSnapshot, unassignedSnapshot] = await Promise.all([
-      getDocs(query(collection(db, 'complaints'), ...assignedConstraints)),
-      getDocs(query(collection(db, 'complaints'), ...unassignedConstraints)),
-    ]);
-
-    // Combine and deduplicate
-    const complaintMap = new Map<string, Complaint>();
+    console.log('🔍 Getting complaints for officer:', officerId);
     
-    assignedSnapshot.docs.forEach(doc => {
-      const complaint = parseComplaintDoc(doc);
-      complaintMap.set(complaint.id, complaint);
-    });
+    if (!officerId) {
+      console.error('❌ No officer ID provided');
+      return { complaints: [], lastDoc: null };
+    }
     
-    unassignedSnapshot.docs.forEach(doc => {
-      const complaint = parseComplaintDoc(doc);
-      // Only add unassigned complaints (no assignedOfficerId or empty)
-      if (!complaint.assignedOfficerId) {
-        complaintMap.set(complaint.id, complaint);
+    // Get officer's user document to find their department
+    const userDoc = await getDoc(doc(db, 'users', officerId));
+    const officerDepartment = userDoc.exists() ? userDoc.data()?.department : null;
+    const officerDistrict = userDoc.exists() ? userDoc.data()?.district : null;
+    const normalizedOfficerDepartment = normalizeDepartmentName(officerDepartment || '');
+    const normalizedOfficerDistrict = (officerDistrict || '').toLowerCase().trim();
+    
+    console.log('👮 Officer department:', officerDepartment);
+    console.log('📍 Officer district:', officerDistrict);
+    
+    // Get ALL complaints and filter in memory (simpler, no index required)
+    const complaintsRef = collection(db, 'complaints');
+    const allComplaintsQuery = query(
+      complaintsRef,
+      orderBy('createdAt', 'desc'),
+      limit(100) // Get last 100 complaints
+    );
+
+    const snapshot = await getDocs(allComplaintsQuery);
+    console.log('📊 Total complaints fetched:', snapshot.size);
+
+    // Parse all complaints
+    const allComplaints = snapshot.docs.map(doc => parseComplaintDoc(doc));
+    
+    // Filter for officer: assigned to them OR (unassigned with relevant status AND matching department)
+    const relevantComplaints = allComplaints.filter(complaint => {
+      // Show if assigned to this officer
+      if (complaint.assignedOfficerId === officerId) {
+        console.log('✅ Complaint assigned to officer:', complaint.id);
+        return true;
       }
+      
+        // Show if:
+        // - Unassigned
+        // - In actionable status
+        // - Matches officer's department (if officer has department assigned)
+        // - Matches officer's district (if officer has district assigned)
+      if (!complaint.assignedOfficerId && 
+          ['submitted', 'under_review', 'in_progress'].includes(complaint.status)) {
+        
+        // If officer has a department, only show complaints from that department
+        if (normalizedOfficerDepartment) {
+          const normalizedComplaintDepartment = normalizeDepartmentName(complaint.department);
+          const departmentMatches = normalizedComplaintDepartment === normalizedOfficerDepartment;
+          const complaintDistrict = (complaint.location?.district || '').toLowerCase().trim();
+          const districtMatches = !normalizedOfficerDistrict || complaintDistrict === normalizedOfficerDistrict;
+          const matches = departmentMatches && districtMatches;
+          console.log(
+            `Complaint ${complaint.id}: dept=${complaint.department}, officer dept=${officerDepartment}, district=${complaint.location?.district}, officer district=${officerDistrict}, matches=${matches}`
+          );
+          return matches;
+        }
+        
+        // If officer has no department (maybe admin), show all unassigned
+        console.log('✅ Unassigned complaint (no dept filter):', complaint.id);
+        return true;
+      }
+      
+      return false;
     });
 
-    // Convert to array and sort by createdAt desc
-    let complaints = Array.from(complaintMap.values())
-      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    console.log('📋 Relevant complaints for officer:', relevantComplaints.length);
 
     // Apply status filter if provided
-    if (status) {
-      complaints = complaints.filter(c => c.status === status);
-    }
+    let complaints = status 
+      ? relevantComplaints.filter(c => c.status === status)
+      : relevantComplaints;
 
     // Apply pagination
     complaints = complaints.slice(0, pageSize);
 
     return { complaints, lastDoc: null };
   } catch (error) {
-    console.error('Error getting officer complaints:', error);
+    console.error('❌ Error getting officer complaints:', error);
     return { complaints: [], lastDoc: null };
   }
 }
@@ -404,7 +450,7 @@ export async function assignComplaintToOfficer(
     await updateDoc(doc(db, 'complaints', complaintId), {
       assignedOfficerId: officerId,
       assignedOfficerName: officerName,
-      status: 'in-progress',
+      status: 'in_progress',
       updatedAt: serverTimestamp(),
     });
 
@@ -413,7 +459,7 @@ export async function assignComplaintToOfficer(
       complaintId,
       officerId,
       officerName,
-      status: 'in-progress',
+      status: 'in_progress',
       comment: `Complaint assigned to ${officerName}`,
       attachments: [],
       createdAt: serverTimestamp(),

@@ -91,6 +91,29 @@ export default function ChatbotPage() {
   const { toast } = useToast();
   const { user } = useAuth();
 
+  const getChatStorageKey = () => `chat-history:${user?.uid || 'guest'}`;
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(getChatStorageKey());
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as ChatMessage[];
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        setMessages(parsed);
+      }
+    } catch {
+      // Ignore invalid local storage data.
+    }
+  }, [user?.uid]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(getChatStorageKey(), JSON.stringify(messages));
+    } catch {
+      // Ignore local storage write errors.
+    }
+  }, [messages, user?.uid]);
+
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
@@ -205,6 +228,11 @@ export default function ChatbotPage() {
 
   const clearChat = () => {
     setMessages([welcomeMessage]);
+    try {
+      localStorage.removeItem(getChatStorageKey());
+    } catch {
+      // Ignore storage cleanup errors.
+    }
     toast({
       title: 'Chat Cleared',
       description: 'Conversation history has been reset',
@@ -237,9 +265,6 @@ export default function ChatbotPage() {
           </div>
           <h1 className="text-3xl font-bold text-primary mb-2">Clod.AI</h1>
           <p className="text-gray-600 text-lg">AI Powered Grievance Assistant</p>
-          <Badge variant="secondary" className="mt-2">
-            Powered by GPT-3.5 Turbo
-          </Badge>
         </div>
 
         {/* Chat Container */}

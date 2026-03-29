@@ -38,6 +38,8 @@ import {
   Loader2,
   UserPlus,
   Filter,
+  Copy,
+  Check,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -67,7 +69,20 @@ import { useToast } from '@/components/ui/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { getAllComplaints } from '@/services/complaints.service';
 import { getDashboardStats, getDepartmentPerformance } from '@/services/stats.service';
-import { getAllUsers, getUserCounts, updateUserRole, updateUserActiveStatus, getPendingOfficerRequests, OfficerRequest, approveOfficerRequest, rejectOfficerRequest } from '@/services/users.service';
+import {
+  getAllUsers,
+  getUserCounts,
+  updateUserRole,
+  updateUserActiveStatus,
+  updateUserDetails,
+  deleteUserRecord,
+  getPendingOfficerRequests,
+  OfficerRequest,
+  approveOfficerRequest,
+  rejectOfficerRequest,
+  submitOfficerRequest,
+} from '@/services/users.service';
+import { getSystemSettings, saveSystemSettings } from '@/services/settings.service';
 import { Complaint, User as UserType, DEPARTMENTS, DISTRICTS, STATUS_LABELS, PRIORITY_LABELS } from '@/lib/types';
 import { formatDate, exportToCSV } from '@/lib/utils';
 
@@ -84,10 +99,60 @@ export default function AdminPanel() {
   const [selectedUser, setSelectedUser] = useState<UserType | null>(null);
   const [pendingOfficerRequests, setPendingOfficerRequests] = useState<OfficerRequest[]>([]);
   const [isProcessingRequest, setIsProcessingRequest] = useState<string | null>(null);
+  const [selectedComplaint, setSelectedComplaint] = useState<Complaint | null>(null);
+  const [isComplaintDetailOpen, setIsComplaintDetailOpen] = useState(false);
+  const [isEditUserDialogOpen, setIsEditUserDialogOpen] = useState(false);
+  const [isSavingUser, setIsSavingUser] = useState(false);
+  const [isDeletingUser, setIsDeletingUser] = useState<string | null>(null);
+
+  const [officerName, setOfficerName] = useState('');
+  const [officerEmail, setOfficerEmail] = useState('');
+  const [officerDepartment, setOfficerDepartment] = useState('');
+  const [officerDistrict, setOfficerDistrict] = useState('');
+
+  const [editName, setEditName] = useState('');
+  const [editRole, setEditRole] = useState<'citizen' | 'officer' | 'admin'>('citizen');
+  const [editDepartment, setEditDepartment] = useState('');
+  const [editDistrict, setEditDistrict] = useState('');
+  const [editActive, setEditActive] = useState(true);
+
+  const [slaHigh, setSlaHigh] = useState(1);
+  const [slaMedium, setSlaMedium] = useState(3);
+  const [slaLow, setSlaLow] = useState(7);
+  const [notifyNewComplaint, setNotifyNewComplaint] = useState(true);
+  const [notifySlaBreach, setNotifySlaBreach] = useState(true);
+  const [notifyDailySummary, setNotifyDailySummary] = useState(false);
+  const [isSavingSettings, setIsSavingSettings] = useState(false);
+  const [latestApprovedCredentials, setLatestApprovedCredentials] = useState<{
+    email: string;
+    password: string;
+  } | null>(null);
+  const [passwordCopied, setPasswordCopied] = useState(false);
 
   const router = useRouter();
   const { toast } = useToast();
   const { user, loading: authLoading } = useAuth();
+
+  const handleCopyPassword = async () => {
+    if (!latestApprovedCredentials?.password) return;
+
+    try {
+      await navigator.clipboard.writeText(latestApprovedCredentials.password);
+      setPasswordCopied(true);
+      toast({
+        title: 'Copied',
+        description: 'Password copied to clipboard',
+      });
+
+      setTimeout(() => setPasswordCopied(false), 1500);
+    } catch {
+      toast({
+        title: 'Copy Failed',
+        description: 'Could not copy password. Please copy it manually.',
+        variant: 'destructive',
+      });
+    }
+  };
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -107,23 +172,83 @@ export default function AdminPanel() {
   const fetchData = async () => {
     setIsLoading(true);
     try {
-      const [complaintsData, statsData, usersData, userCounts, pendingRequests] = await Promise.all([
+      console.log('🔍 Admin: Starting data fetch...');
+      const [complaintsData, statsData, usersData, userCounts, pendingRequests, systemSettings] = await Promise.all([
         getAllComplaints(),
         getDashboardStats(),
         getAllUsers(),
         getUserCounts(),
         getPendingOfficerRequests(),
+        getSystemSettings(),
       ]);
+
+      console.log('📊 Admin: Fetched complaints:', complaintsData.complaints.length);
+      console.log('📊 Admin: Stats data:', statsData);
+      console.log('👥 Admin: User counts:', userCounts);
+
+      // Set complaints first
       setComplaints(complaintsData.complaints);
-      setStats({
-        ...statsData,
+
+      // Calculate fresh stats from actual complaints data
+      const complaintStatuses: Record<string, number> = {};
+      const complaintDepartments: Record<string, number> = {};
+      let resolvedCount = 0;
+      let overdueCount = 0;
+      const now = new Date();
+
+      complaintsData.complaints.forEach((c) => {
+        // Count by status
+        complaintStatuses[c.status] = (complaintStatuses[c.status] || 0) + 1;
+
+        // Count by department
+        complaintDepartments[c.department] = (complaintDepartments[c.department] || 0) + 1;
+
+        // Count resolved
+        if (c.status === 'resolved' || c.status === 'closed') {
+          resolvedCount++;
+        }
+
+        // Count overdue
+        const deadline = new Date(c.slaDeadline as any);
+        if (!Number.isNaN(deadline.getTime()) && deadline < now && !['resolved', 'closed', 'rejected'].includes(c.status)) {
+          overdueCount++;
+        }
+      });
+
+      const calculatedStats = {
+        totalComplaints: complaintsData.complaints.length,
+        pendingComplaints:
+          (complaintStatuses['submitted'] || 0) +
+          (complaintStatuses['under_review'] || 0) +
+          (complaintStatuses['in_progress'] || 0),
+        resolvedComplaints: resolvedCount,
+        closedComplaints: complaintStatuses['closed'] || 0,
+        escalatedComplaints: complaintStatuses['escalated'] || 0,
+        overdueComplaints: overdueCount,
+        avgResolutionTime: statsData.avgResolutionTime || 0,
+        byDepartment: complaintDepartments,
+        byStatus: complaintStatuses,
+        byDistrict: statsData.byDistrict || {},
+        byPriority: statsData.byPriority || {},
+        monthlyTrends: statsData.monthlyTrends || [],
         totalUsers: userCounts.total,
         activeOfficers: userCounts.activeOfficers,
-      });
+      };
+
+      console.log('✅ Admin: Calculated stats:', calculatedStats);
+      setStats(calculatedStats);
+
       setUsers(usersData as UserType[]);
       setPendingOfficerRequests(pendingRequests);
+
+      setSlaHigh(systemSettings.slaDays.high);
+      setSlaMedium(systemSettings.slaDays.medium);
+      setSlaLow(systemSettings.slaDays.low);
+      setNotifyNewComplaint(systemSettings.notifications.newComplaintAlerts);
+      setNotifySlaBreach(systemSettings.notifications.slaBreachAlerts);
+      setNotifyDailySummary(systemSettings.notifications.dailySummary);
     } catch (error) {
-      console.error('Error fetching data:', error);
+      console.error('❌ Error fetching data:', error);
       setComplaints([]);
       setStats(null);
       setUsers([]);
@@ -131,6 +256,190 @@ export default function AdminPanel() {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleOpenEditUser = (u: UserType) => {
+    setSelectedUser(u);
+    setEditName(u.displayName || '');
+    setEditRole(u.role);
+    setEditDepartment(u.department || '');
+    setEditDistrict(u.district || '');
+    setEditActive(u.isActive !== false);
+    setIsEditUserDialogOpen(true);
+  };
+
+  const handleSaveUser = async () => {
+    if (!selectedUser) return;
+
+    setIsSavingUser(true);
+    const ok = await updateUserDetails(selectedUser.uid, {
+      displayName: editName,
+      role: editRole,
+      department: editDepartment || undefined,
+      district: editDistrict || undefined,
+      isActive: editActive,
+    });
+
+    setIsSavingUser(false);
+
+    if (!ok) {
+      toast({
+        title: 'Update failed',
+        description: 'Unable to update user details',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    toast({
+      title: 'User updated',
+      description: 'User details were saved successfully',
+    });
+    setIsEditUserDialogOpen(false);
+    fetchData();
+  };
+
+  const handleDeleteUser = async (u: UserType) => {
+    if (u.uid === user?.uid) {
+      toast({
+        title: 'Action blocked',
+        description: 'You cannot delete your own admin account',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    const confirmed = window.confirm(`Delete user ${u.displayName || u.email}?`);
+    if (!confirmed) return;
+
+    setIsDeletingUser(u.uid);
+    const ok = await deleteUserRecord(u.uid);
+    setIsDeletingUser(null);
+
+    if (!ok) {
+      toast({
+        title: 'Delete failed',
+        description: 'Could not delete user record',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    toast({
+      title: 'User deleted',
+      description: 'User record removed from Firestore',
+    });
+    fetchData();
+  };
+
+  const handleCreateOfficer = async () => {
+    if (!officerName || !officerEmail || !officerDepartment || !officerDistrict) {
+      toast({
+        title: 'Missing fields',
+        description: 'Fill name, email, department and district',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    const result = await submitOfficerRequest({
+      displayName: officerName,
+      email: officerEmail,
+      phone: '',
+      employeeId: `ADM-${Date.now().toString().slice(-6)}`,
+      department: officerDepartment,
+      designation: 'District Officer',
+      district: officerDistrict,
+    });
+
+    if (!result.success) {
+      toast({
+        title: 'Failed to create request',
+        description: result.error || 'Unable to create officer request',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    toast({
+      title: 'Officer request created',
+      description: 'Review and approve it in the Requests tab',
+    });
+
+    setOfficerName('');
+    setOfficerEmail('');
+    setOfficerDepartment('');
+    setOfficerDistrict('');
+    setIsUserDialogOpen(false);
+    fetchData();
+  };
+
+  const handleSaveSlaSettings = async () => {
+    setIsSavingSettings(true);
+    const ok = await saveSystemSettings(
+      {
+        slaDays: {
+          high: Math.max(1, slaHigh),
+          medium: Math.max(1, slaMedium),
+          low: Math.max(1, slaLow),
+        },
+        notifications: {
+          newComplaintAlerts: notifyNewComplaint,
+          slaBreachAlerts: notifySlaBreach,
+          dailySummary: notifyDailySummary,
+        },
+      },
+      user?.uid
+    );
+
+    setIsSavingSettings(false);
+    if (!ok) {
+      toast({
+        title: 'Save failed',
+        description: 'Could not save SLA settings',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    toast({
+      title: 'Settings saved',
+      description: 'SLA configuration updated successfully',
+    });
+  };
+
+  const handleSaveNotificationSettings = async () => {
+    setIsSavingSettings(true);
+    const ok = await saveSystemSettings(
+      {
+        slaDays: {
+          high: Math.max(1, slaHigh),
+          medium: Math.max(1, slaMedium),
+          low: Math.max(1, slaLow),
+        },
+        notifications: {
+          newComplaintAlerts: notifyNewComplaint,
+          slaBreachAlerts: notifySlaBreach,
+          dailySummary: notifyDailySummary,
+        },
+      },
+      user?.uid
+    );
+
+    setIsSavingSettings(false);
+    if (!ok) {
+      toast({
+        title: 'Save failed',
+        description: 'Could not save notification settings',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    toast({
+      title: 'Settings saved',
+      description: 'Notification settings updated successfully',
+    });
   };
 
   const handleExport = () => {
@@ -152,29 +461,87 @@ export default function AdminPanel() {
     });
   };
 
-  // Dynamic department stats computed from actual data
-  const departmentStats = stats?.byDepartment
-    ? Object.entries(stats.byDepartment)
-        .map(([name, total]) => ({
-          name: name.length > 15 ? name.slice(0, 12) + '...' : name,
-          total: total as number,
-          resolved: complaints.filter(c => c.department === name && (c.status === 'resolved' || c.status === 'closed')).length,
-          pending: complaints.filter(c => c.department === name && !['resolved', 'closed', 'rejected'].includes(c.status)).length,
-        }))
-        .sort((a, b) => b.total - a.total)
-        .slice(0, 6)
-    : [];
+  const complaintsByDepartment = complaints.reduce<Record<string, number>>((acc, c) => {
+    const key = c.department || 'Unknown';
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
 
-  // Dynamic status distribution computed from actual data
-  const statusDistribution = stats?.byStatus
-    ? [
-        { name: 'Submitted', value: stats.byStatus.submitted || 0, color: '#3b82f6' },
-        { name: 'Under Review', value: stats.byStatus.under_review || 0, color: '#f59e0b' },
-        { name: 'In Progress', value: stats.byStatus.in_progress || 0, color: '#f97316' },
-        { name: 'Resolved', value: stats.byStatus.resolved || 0, color: '#22c55e' },
-        { name: 'Closed', value: stats.byStatus.closed || 0, color: '#6b7280' },
-      ]
-    : [];
+  const departmentSource =
+    stats?.byDepartment && Object.keys(stats.byDepartment).length > 0
+      ? stats.byDepartment
+      : complaintsByDepartment;
+
+  // Dynamic department stats computed from stats or fallback complaint data
+  const departmentStats = Object.entries(departmentSource)
+    .map(([name, total]) => ({
+      name: name.length > 15 ? name.slice(0, 12) + '...' : name,
+      total: total as number,
+      resolved: complaints.filter(
+        (c) => c.department === name && (c.status === 'resolved' || c.status === 'closed')
+      ).length,
+      pending: complaints.filter(
+        (c) => c.department === name && !['resolved', 'closed', 'rejected'].includes(c.status)
+      ).length,
+    }))
+    .sort((a, b) => b.total - a.total)
+    .slice(0, 6);
+
+  const complaintStatusCounts = complaints.reduce(
+    (acc, c) => {
+      acc[c.status] = (acc[c.status] || 0) + 1;
+      return acc;
+    },
+    {} as Record<string, number>
+  );
+
+  const statusSource =
+    stats?.byStatus && Object.keys(stats.byStatus).length > 0 ? stats.byStatus : complaintStatusCounts;
+
+  // Dynamic status distribution computed from stats or complaint fallback
+  const statusDistribution = [
+    { name: 'Submitted', value: statusSource.submitted || 0, color: '#3b82f6' },
+    { name: 'Under Review', value: statusSource.under_review || 0, color: '#f59e0b' },
+    { name: 'In Progress', value: statusSource.in_progress || 0, color: '#f97316' },
+    { name: 'Resolved', value: statusSource.resolved || 0, color: '#22c55e' },
+    { name: 'Closed', value: statusSource.closed || 0, color: '#6b7280' },
+  ];
+
+  const monthlyTrendData =
+    stats?.monthlyTrends && stats.monthlyTrends.length > 0
+      ? stats.monthlyTrends.map((m: any) => ({
+          month: m.month,
+          total: m.total ?? m.complaints ?? 0,
+          resolved: m.resolved ?? 0,
+        }))
+      : (() => {
+          const monthMap: Record<string, { monthDate: Date; total: number; resolved: number }> = {};
+          complaints.forEach((c) => {
+            const created = new Date(c.createdAt as any);
+            if (Number.isNaN(created.getTime())) return;
+            const key = `${created.getFullYear()}-${String(created.getMonth() + 1).padStart(2, '0')}`;
+            if (!monthMap[key]) {
+              monthMap[key] = {
+                monthDate: new Date(created.getFullYear(), created.getMonth(), 1),
+                total: 0,
+                resolved: 0,
+              };
+            }
+            monthMap[key].total += 1;
+            if (c.status === 'resolved' || c.status === 'closed') {
+              monthMap[key].resolved += 1;
+            }
+          });
+
+          return Object.values(monthMap)
+            .sort((a, b) => a.monthDate.getTime() - b.monthDate.getTime())
+            .slice(-12)
+            .map((m) => ({
+              month: m.monthDate.toLocaleDateString('en-US', { month: 'short', year: 'numeric' }),
+              total: m.total,
+              resolved: m.resolved,
+            }));
+        })();
 
   const filteredComplaints = complaints.filter(
     (c) =>
@@ -249,13 +616,20 @@ export default function AdminPanel() {
                 <div>
                   <p className="text-sm text-gray-500">Resolution Rate</p>
                   <p className="text-3xl font-bold text-green-600">
-                    {stats ? Math.round((stats.resolvedComplaints / stats.totalComplaints) * 100) : 0}%
+                    {stats && stats.totalComplaints > 0
+                      ? Math.round((stats.resolvedComplaints / stats.totalComplaints) * 100)
+                      : 0}
+                    %
                   </p>
                 </div>
                 <CheckCircle2 className="h-8 w-8 text-green-600" />
               </div>
               <Progress
-                value={stats ? (stats.resolvedComplaints / stats.totalComplaints) * 100 : 0}
+                value={
+                  stats && stats.totalComplaints > 0
+                    ? (stats.resolvedComplaints / stats.totalComplaints) * 100
+                    : 0
+                }
                 className="h-2 mt-3"
               />
             </CardContent>
@@ -364,7 +738,7 @@ export default function AdminPanel() {
                 <CardContent>
                   <div className="h-[300px]">
                     <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={stats?.monthlyTrends || []}>
+                      <LineChart data={monthlyTrendData}>
                         <CartesianGrid strokeDasharray="3 3" />
                         <XAxis dataKey="month" />
                         <YAxis />
@@ -372,7 +746,7 @@ export default function AdminPanel() {
                         <Legend />
                         <Line
                           type="monotone"
-                          dataKey="complaints"
+                          dataKey="total"
                           stroke="#1a472a"
                           strokeWidth={2}
                           name="Filed"
@@ -476,7 +850,14 @@ export default function AdminPanel() {
                           <td className="p-3 text-sm">{complaint.department}</td>
                           <td className="p-3 text-sm text-gray-500">{formatDate(complaint.createdAt)}</td>
                           <td className="p-3">
-                            <Button variant="ghost" size="sm">
+                            <Button 
+                              variant="ghost" 
+                              size="sm"
+                              onClick={() => {
+                                setSelectedComplaint(complaint);
+                                setIsComplaintDetailOpen(true);
+                              }}
+                            >
                               <Eye className="h-4 w-4" />
                             </Button>
                           </td>
@@ -540,10 +921,16 @@ export default function AdminPanel() {
                           )}
                         </div>
                         <div className="flex gap-1">
-                          <Button variant="ghost" size="sm">
+                          <Button variant="ghost" size="sm" onClick={() => handleOpenEditUser(u)}>
                             <Edit className="h-4 w-4" />
                           </Button>
-                          <Button variant="ghost" size="sm" className="text-red-500">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-red-500"
+                            disabled={isDeletingUser === u.uid}
+                            onClick={() => handleDeleteUser(u)}
+                          >
                             <Trash2 className="h-4 w-4" />
                           </Button>
                         </div>
@@ -568,6 +955,28 @@ export default function AdminPanel() {
                 </CardDescription>
               </CardHeader>
               <CardContent>
+                {latestApprovedCredentials && (
+                  <div className="mb-4 rounded-lg border border-green-200 bg-green-50 p-4">
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <p className="text-sm font-semibold text-green-800">Latest Approved Credentials</p>
+                        <p className="text-sm text-green-700 mt-1">Email: {latestApprovedCredentials.email}</p>
+                        <p className="text-sm text-green-700">Password: {latestApprovedCredentials.password}</p>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="border-green-300 text-green-800 hover:bg-green-100"
+                        onClick={handleCopyPassword}
+                        title="Copy password"
+                      >
+                        {passwordCopied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
                 {pendingOfficerRequests.length === 0 ? (
                   <div className="text-center py-12">
                     <Shield className="h-12 w-12 mx-auto text-gray-300 mb-4" />
@@ -622,21 +1031,29 @@ export default function AdminPanel() {
                               disabled={isProcessingRequest === request.id}
                               onClick={async () => {
                                 setIsProcessingRequest(request.id);
-                                const result = await approveOfficerRequest(request.id, user?.uid || '');
-                                if (result.success) {
-                                  toast({
-                                    title: 'Request Approved',
-                                    description: `Officer account created. Password: ${result.generatedPassword}`,
-                                  });
-                                  fetchData();
-                                } else {
-                                  toast({
-                                    title: 'Error',
-                                    description: result.error || 'Failed to approve request',
-                                    variant: 'destructive',
-                                  });
+                                try {
+                                  const result = await approveOfficerRequest(request.id, user?.uid || '');
+                                  if (result.success) {
+                                    setLatestApprovedCredentials({
+                                      email: request.email,
+                                      password: result.generatedPassword || '',
+                                    });
+                                    setPasswordCopied(false);
+                                    toast({
+                                      title: 'Request Approved',
+                                      description: `Officer account created for ${request.email}. Password: ${result.generatedPassword}`,
+                                    });
+                                  } else {
+                                    toast({
+                                      title: 'Error',
+                                      description: result.error || 'Failed to approve request',
+                                      variant: 'destructive',
+                                    });
+                                  }
+                                } finally {
+                                  await fetchData();
+                                  setIsProcessingRequest(null);
                                 }
-                                setIsProcessingRequest(null);
                               }}
                             >
                               {isProcessingRequest === request.id ? (
@@ -652,21 +1069,24 @@ export default function AdminPanel() {
                               disabled={isProcessingRequest === request.id}
                               onClick={async () => {
                                 setIsProcessingRequest(request.id);
-                                const result = await rejectOfficerRequest(request.id, user?.uid || '', 'Rejected by admin');
-                                if (result.success) {
-                                  toast({
-                                    title: 'Request Rejected',
-                                    description: 'Officer registration request has been rejected',
-                                  });
-                                  fetchData();
-                                } else {
-                                  toast({
-                                    title: 'Error',
-                                    description: result.error || 'Failed to reject request',
-                                    variant: 'destructive',
-                                  });
+                                try {
+                                  const result = await rejectOfficerRequest(request.id, user?.uid || '', 'Rejected by admin');
+                                  if (result.success) {
+                                    toast({
+                                      title: 'Request Rejected',
+                                      description: 'Officer registration request has been rejected',
+                                    });
+                                  } else {
+                                    toast({
+                                      title: 'Error',
+                                      description: result.error || 'Failed to reject request',
+                                      variant: 'destructive',
+                                    });
+                                  }
+                                } finally {
+                                  await fetchData();
+                                  setIsProcessingRequest(null);
                                 }
-                                setIsProcessingRequest(null);
                               }}
                             >
                               <Trash2 className="h-4 w-4 mr-1" />
@@ -697,7 +1117,12 @@ export default function AdminPanel() {
                       <p className="text-sm text-gray-500">Emergency issues</p>
                     </div>
                     <div className="flex items-center gap-2">
-                      <Input type="number" defaultValue={1} className="w-16" />
+                      <Input
+                        type="number"
+                        value={slaHigh}
+                        onChange={(e) => setSlaHigh(Number(e.target.value) || 1)}
+                        className="w-16"
+                      />
                       <span className="text-sm text-gray-500">day(s)</span>
                     </div>
                   </div>
@@ -707,7 +1132,12 @@ export default function AdminPanel() {
                       <p className="text-sm text-gray-500">Standard issues</p>
                     </div>
                     <div className="flex items-center gap-2">
-                      <Input type="number" defaultValue={3} className="w-16" />
+                      <Input
+                        type="number"
+                        value={slaMedium}
+                        onChange={(e) => setSlaMedium(Number(e.target.value) || 1)}
+                        className="w-16"
+                      />
                       <span className="text-sm text-gray-500">day(s)</span>
                     </div>
                   </div>
@@ -717,11 +1147,18 @@ export default function AdminPanel() {
                       <p className="text-sm text-gray-500">Minor issues</p>
                     </div>
                     <div className="flex items-center gap-2">
-                      <Input type="number" defaultValue={7} className="w-16" />
+                      <Input
+                        type="number"
+                        value={slaLow}
+                        onChange={(e) => setSlaLow(Number(e.target.value) || 1)}
+                        className="w-16"
+                      />
                       <span className="text-sm text-gray-500">day(s)</span>
                     </div>
                   </div>
-                  <Button className="w-full">Save SLA Settings</Button>
+                  <Button className="w-full" onClick={handleSaveSlaSettings} disabled={isSavingSettings}>
+                    {isSavingSettings ? 'Saving...' : 'Save SLA Settings'}
+                  </Button>
                 </CardContent>
               </Card>
 
@@ -736,7 +1173,12 @@ export default function AdminPanel() {
                       <p className="font-medium">New Complaint Alerts</p>
                       <p className="text-sm text-gray-500">Email on new submissions</p>
                     </div>
-                    <input type="checkbox" defaultChecked className="h-4 w-4" />
+                    <input
+                      type="checkbox"
+                      checked={notifyNewComplaint}
+                      onChange={(e) => setNotifyNewComplaint(e.target.checked)}
+                      className="h-4 w-4"
+                    />
                   </div>
                   <Separator />
                   <div className="flex justify-between items-center">
@@ -744,7 +1186,12 @@ export default function AdminPanel() {
                       <p className="font-medium">SLA Breach Alerts</p>
                       <p className="text-sm text-gray-500">Email on overdue complaints</p>
                     </div>
-                    <input type="checkbox" defaultChecked className="h-4 w-4" />
+                    <input
+                      type="checkbox"
+                      checked={notifySlaBreach}
+                      onChange={(e) => setNotifySlaBreach(e.target.checked)}
+                      className="h-4 w-4"
+                    />
                   </div>
                   <Separator />
                   <div className="flex justify-between items-center">
@@ -752,9 +1199,20 @@ export default function AdminPanel() {
                       <p className="font-medium">Daily Summary</p>
                       <p className="text-sm text-gray-500">Daily digest email</p>
                     </div>
-                    <input type="checkbox" className="h-4 w-4" />
+                    <input
+                      type="checkbox"
+                      checked={notifyDailySummary}
+                      onChange={(e) => setNotifyDailySummary(e.target.checked)}
+                      className="h-4 w-4"
+                    />
                   </div>
-                  <Button className="w-full">Save Notification Settings</Button>
+                  <Button
+                    className="w-full"
+                    onClick={handleSaveNotificationSettings}
+                    disabled={isSavingSettings}
+                  >
+                    {isSavingSettings ? 'Saving...' : 'Save Notification Settings'}
+                  </Button>
                 </CardContent>
               </Card>
             </div>
@@ -773,21 +1231,30 @@ export default function AdminPanel() {
             <div className="space-y-4">
               <div>
                 <Label>Full Name</Label>
-                <Input placeholder="Enter full name" />
+                <Input
+                  placeholder="Enter full name"
+                  value={officerName}
+                  onChange={(e) => setOfficerName(e.target.value)}
+                />
               </div>
               <div>
                 <Label>Email</Label>
-                <Input type="email" placeholder="officer@telangana.gov.in" />
+                <Input
+                  type="email"
+                  placeholder="officer@telangana.gov.in"
+                  value={officerEmail}
+                  onChange={(e) => setOfficerEmail(e.target.value)}
+                />
               </div>
               <div>
                 <Label>Department</Label>
-                <Select>
+                <Select value={officerDepartment} onValueChange={setOfficerDepartment}>
                   <SelectTrigger>
                     <SelectValue placeholder="Select department" />
                   </SelectTrigger>
                   <SelectContent>
                     {DEPARTMENTS.map((dept) => (
-                      <SelectItem key={dept.id} value={dept.id}>
+                      <SelectItem key={dept.id} value={dept.name}>
                         {dept.name}
                       </SelectItem>
                     ))}
@@ -796,7 +1263,7 @@ export default function AdminPanel() {
               </div>
               <div>
                 <Label>District</Label>
-                <Select>
+                <Select value={officerDistrict} onValueChange={setOfficerDistrict}>
                   <SelectTrigger>
                     <SelectValue placeholder="Select district" />
                   </SelectTrigger>
@@ -814,11 +1281,163 @@ export default function AdminPanel() {
               <Button variant="outline" onClick={() => setIsUserDialogOpen(false)}>
                 Cancel
               </Button>
-              <Button onClick={() => {
-                toast({ title: 'Officer Added', description: 'New officer account created' });
-                setIsUserDialogOpen(false);
-              }}>
+              <Button onClick={handleCreateOfficer}>
                 Add Officer
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={isEditUserDialogOpen} onOpenChange={setIsEditUserDialogOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Edit User</DialogTitle>
+              <DialogDescription>Update role, status, and profile fields</DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div>
+                <Label>Name</Label>
+                <Input value={editName} onChange={(e) => setEditName(e.target.value)} />
+              </div>
+              <div>
+                <Label>Role</Label>
+                <Select value={editRole} onValueChange={(v) => setEditRole(v as 'citizen' | 'officer' | 'admin')}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="citizen">citizen</SelectItem>
+                    <SelectItem value="officer">officer</SelectItem>
+                    <SelectItem value="admin">admin</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Department</Label>
+                <Select value={editDepartment} onValueChange={setEditDepartment}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select department" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {DEPARTMENTS.map((dept) => (
+                      <SelectItem key={dept.id} value={dept.name}>
+                        {dept.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>District</Label>
+                <Select value={editDistrict} onValueChange={setEditDistrict}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select district" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {DISTRICTS.map((district) => (
+                      <SelectItem key={district} value={district}>
+                        {district}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex items-center justify-between p-3 border rounded-md">
+                <div>
+                  <p className="font-medium">Active Account</p>
+                  <p className="text-sm text-gray-500">Disable to block user access</p>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={editActive}
+                  onChange={(e) => setEditActive(e.target.checked)}
+                  className="h-4 w-4"
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setIsEditUserDialogOpen(false)}>
+                Cancel
+              </Button>
+              <Button onClick={handleSaveUser} disabled={isSavingUser}>
+                {isSavingUser ? 'Saving...' : 'Save User'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Complaint Detail Dialog */}
+        <Dialog open={isComplaintDetailOpen} onOpenChange={setIsComplaintDetailOpen}>
+          <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Complaint Details</DialogTitle>
+              <DialogDescription>{selectedComplaint?.trackingId}</DialogDescription>
+            </DialogHeader>
+            {selectedComplaint && (
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label className="text-gray-500">Status</Label>
+                    <div className="mt-1">
+                      <Badge variant="secondary">{STATUS_LABELS[selectedComplaint.status].en}</Badge>
+                    </div>
+                  </div>
+                  <div>
+                    <Label className="text-gray-500">Priority</Label>
+                    <div className="mt-1">
+                      <Badge variant="outline">{PRIORITY_LABELS[selectedComplaint.priority].en}</Badge>
+                    </div>
+                  </div>
+                </div>
+                <div>
+                  <Label className="text-gray-500">Title</Label>
+                  <p className="mt-1 font-medium">{selectedComplaint.title}</p>
+                </div>
+                <div>
+                  <Label className="text-gray-500">Description</Label>
+                  <p className="mt-1 text-sm text-gray-700">{selectedComplaint.description}</p>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label className="text-gray-500">Department</Label>
+                    <p className="mt-1">{selectedComplaint.department}</p>
+                  </div>
+                  <div>
+                    <Label className="text-gray-500">District</Label>
+                    <p className="mt-1">{selectedComplaint.location?.district || '-'}</p>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label className="text-gray-500">Citizen</Label>
+                    <p className="mt-1">{selectedComplaint.citizenName}</p>
+                  </div>
+                  <div>
+                    <Label className="text-gray-500">Created At</Label>
+                    <p className="mt-1">{formatDate(selectedComplaint.createdAt)}</p>
+                  </div>
+                </div>
+                {selectedComplaint.assignedOfficerName && (
+                  <div>
+                    <Label className="text-gray-500">Assigned Officer</Label>
+                    <p className="mt-1">{selectedComplaint.assignedOfficerName}</p>
+                  </div>
+                )}
+                {selectedComplaint.resolution && (
+                  <div>
+                    <Label className="text-gray-500">Resolution</Label>
+                    <p className="mt-1 text-sm text-gray-700">
+                      {typeof selectedComplaint.resolution === 'string'
+                        ? selectedComplaint.resolution
+                        : selectedComplaint.resolution.description}
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setIsComplaintDetailOpen(false)}>
+                Close
               </Button>
             </DialogFooter>
           </DialogContent>

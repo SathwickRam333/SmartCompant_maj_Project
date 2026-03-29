@@ -53,8 +53,11 @@ export default function NewComplaintPage() {
   const [locationLoading, setLocationLoading] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [trackingId, setTrackingId] = useState('');
+  const [transcribedText, setTranscribedText] = useState('');
+  const [selectedLanguage, setSelectedLanguage] = useState('en-IN');
   
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const recognitionRef = useRef<any>(null);
   const router = useRouter();
   const { toast } = useToast();
   const { user } = useAuth();
@@ -150,31 +153,121 @@ export default function NewComplaintPage() {
 
   const startVoiceRecording = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      setIsRecording(true);
-      // Note: Full voice recording implementation would require Web Speech API
-      // This is a simplified version
-      toast({
-        title: 'Recording...',
-        description: 'Speak your complaint clearly',
-      });
-      
-      setTimeout(() => {
-        setIsRecording(false);
-        stream.getTracks().forEach(track => track.stop());
+      // Check if browser supports Speech Recognition
+      if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
         toast({
-          title: 'Recording stopped',
-          description: 'Processing your voice input...',
+          title: 'Not supported',
+          description: 'Speech recognition is not supported in this browser. Please use Chrome or Edge.',
+          variant: 'destructive',
         });
-        // In a real implementation, you would transcribe the audio here
-      }, 10000); // 10 second recording
+        return;
+      }
+
+      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      const recognition = new SpeechRecognition();
+      recognitionRef.current = recognition;
+
+      // Configure recognition
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.lang = selectedLanguage;
+      recognition.maxAlternatives = 1;
+
+      let finalTranscript = '';
+      let interimTranscript = '';
+
+      recognition.onstart = () => {
+        setIsRecording(true);
+        toast({
+          title: 'Recording started',
+          description: `Speak in ${getLanguageName(selectedLanguage)}. Click Stop when done.`,
+        });
+      };
+
+      recognition.onresult = (event: any) => {
+        interimTranscript = '';
+        
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const transcript = event.results[i][0].transcript;
+          if (event.results[i].isFinal) {
+            finalTranscript += transcript + ' ';
+          } else {
+            interimTranscript += transcript;
+          }
+        }
+
+        const fullText = finalTranscript + interimTranscript;
+        setTranscribedText(fullText);
+        
+        // Auto-populate description field
+        if (fullText.length > 10) {
+          setValue('description', fullText);
+        }
+      };
+
+      recognition.onerror = (event: any) => {
+        console.error('Speech recognition error:', event.error);
+        setIsRecording(false);
+        
+        let errorMessage = 'An error occurred while recording';
+        if (event.error === 'no-speech') {
+          errorMessage = 'No speech detected. Please try again.';
+        } else if (event.error === 'audio-capture') {
+          errorMessage = 'Microphone not accessible. Please check permissions.';
+        } else if (event.error === 'not-allowed') {
+          errorMessage = 'Microphone access denied. Please allow microphone access.';
+        } else if (event.error === 'network') {
+          errorMessage = 'Network error. Speech recognition requires internet connection.';
+        }
+        
+        toast({
+          title: 'Recording failed',
+          description: errorMessage,
+          variant: 'destructive',
+        });
+      };
+
+      recognition.onend = () => {
+        setIsRecording(false);
+        if (finalTranscript.length > 0) {
+          toast({
+            title: 'Recording stopped',
+            description: `Transcribed ${finalTranscript.split(' ').length} words`,
+          });
+        }
+      };
+
+      recognition.start();
     } catch (error) {
+      console.error('Error starting voice recording:', error);
+      setIsRecording(false);
       toast({
         title: 'Microphone access denied',
         description: 'Please allow microphone access or type your complaint',
         variant: 'destructive',
       });
     }
+  };
+
+  const stopVoiceRecording = () => {
+    if (recognitionRef.current) {
+      recognitionRef.current.stop();
+      setIsRecording(false);
+    }
+  };
+
+  const getLanguageName = (code: string): string => {
+    const languages: Record<string, string> = {
+      'en-IN': 'English',
+      'te-IN': 'Telugu',
+      'hi-IN': 'Hindi',
+      'ur-IN': 'Urdu',
+      'ta-IN': 'Tamil',
+      'kn-IN': 'Kannada',
+      'ml-IN': 'Malayalam',
+      'mr-IN': 'Marathi',
+    };
+    return languages[code] || 'English';
   };
 
   const onSubmit = async (data: ComplaintFormData) => {
@@ -311,15 +404,11 @@ export default function NewComplaintPage() {
                   <Button
                     type="button"
                     variant={inputType === 'voice' ? 'default' : 'outline'}
-                    onClick={() => {
-                      setInputType('voice');
-                      startVoiceRecording();
-                    }}
+                    onClick={() => setInputType('voice')}
                     className="flex-1"
-                    disabled={isRecording}
                   >
-                    <Mic className={`mr-2 h-4 w-4 ${isRecording ? 'text-red-500 animate-pulse' : ''}`} />
-                    {isRecording ? 'Recording...' : 'Voice'}
+                    <Mic className="mr-2 h-4 w-4" />
+                    Voice
                   </Button>
                   <Button
                     type="button"
@@ -332,6 +421,60 @@ export default function NewComplaintPage() {
                   </Button>
                 </div>
               </div>
+
+              {/* Language and Voice Recording (shown when voice is selected) */}
+              {inputType === 'voice' && (
+                <div className="space-y-3 p-4 border rounded-lg bg-blue-50/50">
+                  <div className="space-y-2">
+                    <Label htmlFor="language">Select Language</Label>
+                    <Select value={selectedLanguage} onValueChange={setSelectedLanguage}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="en-IN">English</SelectItem>
+                        <SelectItem value="te-IN">తెలుగు (Telugu)</SelectItem>
+                        <SelectItem value="hi-IN">हिंदी (Hindi)</SelectItem>
+                        <SelectItem value="ur-IN">اردو (Urdu)</SelectItem>
+                        <SelectItem value="ta-IN">தமிழ் (Tamil)</SelectItem>
+                        <SelectItem value="kn-IN">ಕನ್ನಡ (Kannada)</SelectItem>
+                        <SelectItem value="ml-IN">മലയാളം (Malayalam)</SelectItem>
+                        <SelectItem value="mr-IN">मराठी (Marathi)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  
+                  <div className="flex gap-2">
+                    {!isRecording ? (
+                      <Button
+                        type="button"
+                        onClick={startVoiceRecording}
+                        className="flex-1"
+                      >
+                        <Mic className="mr-2 h-4 w-4" />
+                        Start Recording
+                      </Button>
+                    ) : (
+                      <Button
+                        type="button"
+                        onClick={stopVoiceRecording}
+                        variant="destructive"
+                        className="flex-1"
+                      >
+                        <div className="mr-2 h-4 w-4 rounded-full bg-white animate-pulse" />
+                        Stop Recording
+                      </Button>
+                    )}
+                  </div>
+                  
+                  {transcribedText && (
+                    <div className="mt-2 p-3 bg-white rounded border">
+                      <p className="text-sm text-gray-600 mb-1">Transcribed Text:</p>
+                      <p className="text-sm">{transcribedText}</p>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Title */}
               <div className="space-y-2">

@@ -64,11 +64,12 @@ const COLORS = ['#1a472a', '#d4a012', '#3b82f6', '#ef4444', '#8b5cf6', '#06b6d4'
 
 const statusColors = {
   submitted: '#3b82f6',
-  assigned: '#f59e0b',
-  'in-progress': '#f97316',
+  under_review: '#f59e0b',
+  in_progress: '#f97316',
   resolved: '#22c55e',
   closed: '#6b7280',
   rejected: '#ef4444',
+  escalated: '#8b5cf6',
 };
 
 export default function PublicDashboard() {
@@ -104,8 +105,8 @@ export default function PublicDashboard() {
   // Dynamic status data from stats.byStatus
   const statusData = stats ? [
     { name: 'Submitted', value: stats.byStatus?.submitted || 0, color: statusColors.submitted },
-    { name: 'Under Review', value: stats.byStatus?.under_review || 0, color: statusColors.assigned },
-    { name: 'In Progress', value: stats.byStatus?.in_progress || stats.pendingComplaints, color: statusColors['in-progress'] },
+    { name: 'Under Review', value: stats.byStatus?.under_review || 0, color: statusColors.under_review },
+    { name: 'In Progress', value: stats.byStatus?.in_progress || stats.pendingComplaints, color: statusColors.in_progress },
     { name: 'Resolved', value: stats.byStatus?.resolved || stats.resolvedComplaints, color: statusColors.resolved },
     { name: 'Closed', value: stats.byStatus?.closed || stats.closedComplaints, color: statusColors.closed },
   ] : [];
@@ -118,6 +119,10 @@ export default function PublicDashboard() {
     { month: 'May', complaints: 170, resolved: 165 },
     { month: 'Jun', complaints: 190, resolved: 175 },
   ];
+
+  const resolutionRate = stats && stats.totalComplaints > 0
+    ? Math.round((stats.resolvedComplaints / stats.totalComplaints) * 100)
+    : 0;
 
   // Dynamic category data from stats.byDepartment or departmentData
   const categoryData = stats?.byDepartment 
@@ -217,11 +222,11 @@ export default function PublicDashboard() {
               </div>
               <div className="mt-4">
                 <Progress
-                  value={stats ? (stats.resolvedComplaints / stats.totalComplaints) * 100 : 0}
+                  value={resolutionRate}
                   className="h-2"
                 />
                 <p className="text-xs text-gray-500 mt-1">
-                  {stats ? Math.round((stats.resolvedComplaints / stats.totalComplaints) * 100) : 0}% resolution rate
+                  {resolutionRate}% resolution rate
                 </p>
               </div>
             </CardContent>
@@ -497,7 +502,7 @@ export default function PublicDashboard() {
                               className={`${
                                 complaint.status === 'resolved'
                                   ? 'bg-green-100 text-green-700'
-                                  : complaint.status === 'in-progress'
+                                  : complaint.status === 'in_progress'
                                   ? 'bg-orange-100 text-orange-700'
                                   : 'bg-blue-100 text-blue-700'
                               }`}

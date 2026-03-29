@@ -30,18 +30,19 @@ import { formatDate, isOverdue, formatRelativeTime } from '@/lib/utils';
 
 const statusSteps = [
   { status: 'submitted', label: 'Submitted', icon: FileText },
-  { status: 'assigned', label: 'Assigned', icon: User },
-  { status: 'in-progress', label: 'In Progress', icon: AlertCircle },
+  { status: 'under_review', label: 'Under Review', icon: User },
+  { status: 'in_progress', label: 'In Progress', icon: AlertCircle },
   { status: 'resolved', label: 'Resolved', icon: CheckCircle2 },
 ];
 
 const statusColors: Record<string, string> = {
   submitted: 'bg-blue-500',
-  assigned: 'bg-yellow-500',
-  'in-progress': 'bg-orange-500',
+  under_review: 'bg-yellow-500',
+  in_progress: 'bg-orange-500',
   resolved: 'bg-green-500',
   closed: 'bg-gray-500',
   rejected: 'bg-red-500',
+  escalated: 'bg-purple-500',
 };
 
 function TrackPageContent() {
@@ -100,11 +101,12 @@ function TrackPageContent() {
   const getStatusProgress = (status: string): number => {
     const progressMap: Record<string, number> = {
       submitted: 25,
-      assigned: 50,
-      'in-progress': 75,
+      under_review: 50,
+      in_progress: 75,
       resolved: 100,
       closed: 100,
       rejected: 100,
+      escalated: 75,
     };
     return progressMap[status] || 0;
   };
@@ -112,10 +114,11 @@ function TrackPageContent() {
   const getCurrentStepIndex = (status: string): number => {
     const indexMap: Record<string, number> = {
       submitted: 0,
-      assigned: 1,
-      'in-progress': 2,
+      under_review: 1,
+      in_progress: 2,
       resolved: 3,
       closed: 3,
+      escalated: 2,
     };
     return indexMap[status] || 0;
   };

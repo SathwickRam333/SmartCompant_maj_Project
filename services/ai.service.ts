@@ -83,12 +83,82 @@ export interface ChatResponse {
   suggestions?: string[];
 }
 
+// Keyword-based priority detection fallback
+function detectPriorityFromKeywords(text: string): Priority {
+  const lowerText = text.toLowerCase();
+  
+  // HIGH priority keywords
+  const highKeywords = [
+    'emergency', 'urgent', 'critical', 'danger', 'hazard', 'threat',
+    'death', 'dying', 'dead', 'injury', 'injured', 'accident',
+    'fire', 'explosion', 'toxic', 'poison', 'flood', 'collapse',
+    'infrastructure failure', 'major damage', 'life-threatening',
+    'assault', 'violence', 'shooting', 'stabbing'
+  ];
+  
+  // LOW priority keywords
+  const lowKeywords = [
+    'suggestion', 'feedback', 'inquiry', 'question', 'general', 'minor',
+    'typo', 'small issue', 'information', 'request', 'help me understand',
+    'can you explain', 'how do i'
+  ];
+  
+  // Check high priority first (they're more important)
+  for (const keyword of highKeywords) {
+    if (lowerText.includes(keyword)) {
+      return 'high';
+    }
+  }
+  
+  // Check low priority
+  for (const keyword of lowKeywords) {
+    if (lowerText.includes(keyword)) {
+      return 'low';
+    }
+  }
+  
+  // Default to medium if no strong signals
+  return 'medium';
+}
+
+// Extract keywords from complaint text
+function extractKeywords(title: string, description: string): string[] {
+  const text = `${title} ${description}`.toLowerCase();
+  const words = text.match(/\b[a-z]{4,}\b/g) || [];
+  
+  // Remove common stopwords and get unique high-frequency words
+  const stopwords = new Set([
+    'the', 'and', 'from', 'that', 'with', 'this', 'have', 'been',
+    'where', 'what', 'when', 'which', 'will', 'please', 'need'
+  ]);
+  
+  const keywords = Array.from(new Set(words))
+    .filter(w => !stopwords.has(w))
+    .slice(0, 5);
+  
+  return keywords;
+}
+
 // Classify complaint using OpenAI
 export async function classifyComplaint(
   title: string,
   description: string
 ): Promise<ClassificationResult> {
   try {
+    // Check if API key is configured
+    if (!process.env.OPENAI_API_KEY) {
+      console.warn('⚠️ OPENAI_API_KEY not configured. Using fallback keyword analysis.');
+      const priority = detectPriorityFromKeywords(`${title} ${description}`);
+      return {
+        department: 'Municipal',
+        departmentCode: 'MUN',
+        priority,
+        confidence: 0.4,
+        keywords: extractKeywords(title, description),
+        reasoning: 'Classified using keyword analysis (API key not configured)',
+      };
+    }
+
     const openai = getOpenAIClient();
 
     const response = await openai.chat.completions.create({
@@ -119,14 +189,19 @@ export async function classifyComplaint(
       reasoning: result.reasoning,
     };
   } catch (error) {
-    console.error('AI Classification error:', error);
-    // Default fallback
+    console.error('❌ AI Classification error:', error instanceof Error ? error.message : String(error));
+    
+    // Use keyword-based fallback for priority
+    const priority = detectPriorityFromKeywords(`${title} ${description}`);
+    console.log(`📊 Using keyword fallback: priority=${priority}`);
+    
     return {
       department: 'Municipal',
       departmentCode: 'MUN',
-      priority: 'medium',
-      confidence: 0.5,
-      keywords: [],
+      priority,
+      confidence: 0.4,
+      keywords: extractKeywords(title, description),
+      reasoning: 'Classified using keyword analysis (AI fallback)',
     };
   }
 }

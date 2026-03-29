@@ -42,10 +42,17 @@ function toSafeDate(value: any): Date | null {
 // Get dashboard statistics
 export async function getDashboardStats(): Promise<DashboardStats> {
   try {
-    // Get global stats document or calculate from complaints
+    // Always calculate from live complaints first to avoid stale/incorrect cached values.
+    const liveStats = await calculateStats();
+
+    // If live stats contain any data, trust them.
+    if (liveStats.totalComplaints > 0) {
+      return liveStats;
+    }
+
+    // Fallback to cached stats document only when there are no complaints.
     const statsRef = doc(db, 'stats', 'global');
     const statsDoc = await getDoc(statsRef);
-
     if (statsDoc.exists()) {
       const data = statsDoc.data();
       return {
@@ -64,8 +71,7 @@ export async function getDashboardStats(): Promise<DashboardStats> {
       };
     }
 
-    // Calculate stats from scratch if no cached stats
-    return await calculateStats();
+    return liveStats;
   } catch (error) {
     console.error('Error getting dashboard stats:', error);
     return getEmptyStats();

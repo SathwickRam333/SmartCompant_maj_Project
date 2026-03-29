@@ -14,9 +14,15 @@ import {
   serverTimestamp,
   setDoc,
 } from 'firebase/firestore';
-import { db, auth } from '@/firebase/config';
+import firebaseApp, { db } from '@/firebase/config';
 import { UserRole } from '@/lib/types';
-import { createUserWithEmailAndPassword } from 'firebase/auth';
+import {
+  createUserWithEmailAndPassword,
+  fetchSignInMethodsForEmail,
+  getAuth,
+  signOut,
+} from 'firebase/auth';
+import { deleteApp, initializeApp } from 'firebase/app';
 
 export interface UserData {
   uid: string;
@@ -225,6 +231,53 @@ export async function updateUserDepartment(uid: string, department: string): Pro
   }
 }
 
+// Update user profile fields (admin)
+export async function updateUserDetails(
+  uid: string,
+  updates: {
+    displayName?: string;
+    role?: UserRole;
+    department?: string;
+    district?: string;
+    phone?: string;
+    isActive?: boolean;
+  }
+): Promise<boolean> {
+  try {
+    const userRef = doc(db, 'users', uid);
+    const payload: Record<string, any> = {
+      ...updates,
+      updatedAt: Timestamp.now(),
+    };
+
+    // Avoid writing undefined fields
+    Object.keys(payload).forEach((key) => {
+      if (payload[key] === undefined) {
+        delete payload[key];
+      }
+    });
+
+    await updateDoc(userRef, payload);
+    return true;
+  } catch (error) {
+    console.error('Error updating user details:', error);
+    return false;
+  }
+}
+
+// Delete user Firestore record (admin)
+// Note: This removes the profile document only; Auth account removal must be done via Admin SDK/Cloud Function.
+export async function deleteUserRecord(uid: string): Promise<boolean> {
+  try {
+    const userRef = doc(db, 'users', uid);
+    await deleteDoc(userRef);
+    return true;
+  } catch (error) {
+    console.error('Error deleting user record:', error);
+    return false;
+  }
+}
+
 // Get officers by department
 export async function getOfficersByDepartment(department: string): Promise<UserData[]> {
   try {
@@ -269,33 +322,51 @@ export async function submitOfficerRequest(data: {
   district: string;
 }): Promise<{ success: boolean; error?: string }> {
   try {
+    const normalizedEmail = data.email.trim().toLowerCase();
+    const payload = {
+      ...data,
+      email: normalizedEmail,
+    };
+
+    console.log('📝 Submitting officer request:', payload);
+    
     // Check if email already exists in users or pending requests
     const usersRef = collection(db, 'users');
-    const userQuery = query(usersRef, where('email', '==', data.email));
+    const userQuery = query(usersRef, where('email', '==', normalizedEmail));
     const userSnapshot = await getDocs(userQuery);
     
     if (!userSnapshot.empty) {
+      console.warn('⚠️ Email already exists in users');
       return { success: false, error: 'An account with this email already exists' };
     }
 
     const requestsRef = collection(db, 'pending_officer_requests');
-    const requestQuery = query(requestsRef, where('email', '==', data.email));
+    const requestQuery = query(
+      requestsRef,
+      where('email', '==', normalizedEmail),
+      where('status', '==', 'pending')
+    );
     const requestSnapshot = await getDocs(requestQuery);
     
     if (!requestSnapshot.empty) {
+      console.warn('⚠️ Email already exists in pending requests');
       return { success: false, error: 'A pending request with this email already exists' };
     }
 
     // Create new officer request
-    await addDoc(requestsRef, {
-      ...data,
+    const docRef = await addDoc(requestsRef, {
+      ...payload,
       status: 'pending',
       submittedAt: serverTimestamp(),
     });
 
+    console.log('✅ Officer request created successfully:', docRef.id);
+    console.log('📍 Document path: pending_officer_requests/' + docRef.id);
+    
     return { success: true };
   } catch (error: any) {
-    console.error('Error submitting officer request:', error);
+    console.error('❌ Error submitting officer request:', error);
+    console.error('Error details:', error.message);
     return { success: false, error: error.message };
   }
 }
@@ -303,12 +374,19 @@ export async function submitOfficerRequest(data: {
 // Get pending officer requests
 export async function getPendingOfficerRequests(): Promise<OfficerRequest[]> {
   try {
+    console.log('🔍 Fetching pending officer requests...');
+    
     const requestsRef = collection(db, 'pending_officer_requests');
-    const q = query(requestsRef, where('status', '==', 'pending'), orderBy('submittedAt', 'desc'));
+    // Query without orderBy first (no index needed), then sort on client
+    const q = query(requestsRef, where('status', '==', 'pending'));
     const snapshot = await getDocs(q);
     
-    return snapshot.docs.map(doc => {
+    console.log(`✅ Found ${snapshot.size} pending requests`);
+    
+    const requests = snapshot.docs.map(doc => {
       const data = doc.data();
+      console.log('📋 Request:', doc.id, data);
+      
       return {
         id: doc.id,
         displayName: data.displayName,
@@ -327,8 +405,11 @@ export async function getPendingOfficerRequests(): Promise<OfficerRequest[]> {
         rejectionReason: data.rejectionReason,
       } as OfficerRequest;
     });
+    
+    // Sort by submittedAt in descending order (newest first)
+    return requests.sort((a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime());
   } catch (error) {
-    console.error('Error fetching pending officer requests:', error);
+    console.error('❌ Error fetching pending officer requests:', error);
     return [];
   }
 }
@@ -338,6 +419,8 @@ export async function approveOfficerRequest(
   requestId: string,
   approvedByUid: string
 ): Promise<{ success: boolean; error?: string; generatedPassword?: string }> {
+  let secondaryApp: ReturnType<typeof initializeApp> | null = null;
+
   try {
     const requestRef = doc(db, 'pending_officer_requests', requestId);
     const requestSnap = await getDoc(requestRef);
@@ -350,10 +433,35 @@ export async function approveOfficerRequest(
     
     // Generate random password
     const generatedPassword = Math.random().toString(36).slice(-10) + Math.random().toString(36).toUpperCase().slice(-2);
-    
-    // Create Firebase Auth user
+
+    // Create the Auth user in an isolated secondary app so current admin session is not replaced.
+    secondaryApp = initializeApp(firebaseApp.options, `officer-create-${Date.now()}`);
+    const secondaryAuth = getAuth(secondaryApp);
+
+    // Pre-check Auth to provide a clearer error before creation attempt.
+    const existingSignInMethods = await fetchSignInMethodsForEmail(secondaryAuth, requestData.email);
+    if (existingSignInMethods.length > 0) {
+      await updateDoc(requestRef, {
+        status: 'rejected',
+        rejectedBy: approvedByUid,
+        rejectedAt: serverTimestamp(),
+        rejectionReason:
+          'Email already exists in Firebase Auth. Use Forgot Password for this account or submit request with a different email.',
+      });
+
+      await signOut(secondaryAuth);
+      await deleteApp(secondaryApp);
+      secondaryApp = null;
+
+      return {
+        success: false,
+        error:
+          'This email already exists in Authentication. The request was auto-rejected. Use Forgot Password for this email or submit a new request with a different email.',
+      };
+    }
+
     const userCredential = await createUserWithEmailAndPassword(
-      auth,
+      secondaryAuth,
       requestData.email,
       generatedPassword
     );
@@ -385,10 +493,44 @@ export async function approveOfficerRequest(
     // TODO: Send email with credentials
     // This should be done via Firebase Cloud Function to send email securely
 
+    await signOut(secondaryAuth);
+    await deleteApp(secondaryApp);
+    secondaryApp = null;
+
     return { success: true, generatedPassword };
   } catch (error: any) {
     console.error('Error approving officer request:', error);
+
+    if (error?.code === 'auth/email-already-in-use') {
+      try {
+        const requestRef = doc(db, 'pending_officer_requests', requestId);
+        await updateDoc(requestRef, {
+          status: 'rejected',
+          rejectedBy: approvedByUid,
+          rejectedAt: serverTimestamp(),
+          rejectionReason:
+            'Email already exists in Firebase Auth. Use Forgot Password for this account or submit request with a different email.',
+        });
+      } catch (updateError) {
+        console.error('Failed to update request status after email conflict:', updateError);
+      }
+
+      return {
+        success: false,
+        error:
+          'This email already exists in Authentication. The request was auto-rejected. Use Forgot Password for this email or submit a new request with a different email.',
+      };
+    }
+
     return { success: false, error: error.message };
+  } finally {
+    if (secondaryApp) {
+      try {
+        await deleteApp(secondaryApp);
+      } catch {
+        // Ignore cleanup errors
+      }
+    }
   }
 }
 

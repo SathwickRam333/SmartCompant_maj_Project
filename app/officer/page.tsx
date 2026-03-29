@@ -90,11 +90,44 @@ export default function OfficerDashboard() {
   const fetchComplaints = async () => {
     setIsLoading(true);
     try {
+      console.group('🔍 Officer Dashboard - Fetching Complaints');
+      console.log('User:', user);
+      console.log('User UID:', user?.uid);
+      console.log('User Email:', user?.email);
+      console.log('User Role:', user?.role);
+      
+      if (!user?.uid) {
+        console.error('❌ No user UID available!');
+        console.groupEnd();
+        setComplaints([]);
+        setIsLoading(false);
+        return;
+      }
+      
       // Fetch complaints assigned to this officer or all complaints for admin
-      const data = await getOfficerComplaints(user?.uid || '');
+      console.log('📞 Calling getOfficerComplaints with UID:', user.uid);
+      const data = await getOfficerComplaints(user.uid);
+      console.log('✅ Complaints received:', data.complaints.length);
+      console.log('📋 Complaint IDs:', data.complaints.map(c => c.id));
+      console.log('📋 Full data:', data.complaints);
+      console.groupEnd();
+      
       setComplaints(data.complaints);
+      
+      if (data.complaints.length === 0) {
+        toast({
+          title: 'No complaints found',
+          description: 'There are no complaints available to view at this time',
+        });
+      }
     } catch (error) {
-      console.error('Error fetching complaints:', error);
+      console.error('❌ Error fetching complaints:', error);
+      console.groupEnd();
+      toast({
+        title: 'Error loading complaints',
+        description: error instanceof Error ? error.message : 'Please refresh the page and try again',
+        variant: 'destructive',
+      });
       setComplaints([]);
     } finally {
       setIsLoading(false);

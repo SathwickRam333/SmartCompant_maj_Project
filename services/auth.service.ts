@@ -74,7 +74,8 @@ export async function registerUser(
 // Sign in user
 export async function signInUser(email: string, password: string): Promise<AuthResult> {
   try {
-    const userCredential = await signInWithEmailAndPassword(auth, email, password);
+    const normalizedEmail = email.trim().toLowerCase();
+    const userCredential = await signInWithEmailAndPassword(auth, normalizedEmail, password);
     const { user: firebaseUser } = userCredential;
 
     // Get user data from Firestore
