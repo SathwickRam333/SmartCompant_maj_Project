@@ -40,10 +40,10 @@ function toSafeDate(value: any): Date | null {
 }
 
 // Get dashboard statistics
-export async function getDashboardStats(): Promise<DashboardStats> {
+export async function getDashboardStats(district?: string): Promise<DashboardStats> {
   try {
     // Always calculate from live complaints first to avoid stale/incorrect cached values.
-    const liveStats = await calculateStats();
+    const liveStats = await calculateStats(district);
 
     // If live stats contain any data, trust them.
     if (liveStats.totalComplaints > 0) {
@@ -79,10 +79,10 @@ export async function getDashboardStats(): Promise<DashboardStats> {
 }
 
 // Calculate stats from complaints collection
-async function calculateStats(): Promise<DashboardStats> {
+async function calculateStats(filterDistrict?: string): Promise<DashboardStats> {
   const complaintsRef = collection(db, 'complaints');
   
-  // Get all complaints for calculation
+  // Get all complaints for calculation (will filter in memory for district)
   const snapshot = await getDocs(complaintsRef);
   
   const stats: DashboardStats = {
@@ -106,6 +106,12 @@ async function calculateStats(): Promise<DashboardStats> {
 
   snapshot.forEach((doc) => {
     const data = doc.data();
+    
+    // Filter by district if specified
+    if (filterDistrict && filterDistrict !== 'all' && data.location?.district !== filterDistrict) {
+      return; // Skip this complaint
+    }
+    
     stats.totalComplaints++;
 
     // Status counts
@@ -145,9 +151,9 @@ async function calculateStats(): Promise<DashboardStats> {
     stats.byDepartment[dept] = (stats.byDepartment[dept] || 0) + 1;
 
     // District counts
-    const district = data.location?.district as string;
-    if (district) {
-      stats.byDistrict[district] = (stats.byDistrict[district] || 0) + 1;
+    const complaintDistrict = data.location?.district as string;
+    if (complaintDistrict) {
+      stats.byDistrict[complaintDistrict] = (stats.byDistrict[complaintDistrict] || 0) + 1;
     }
 
     // Priority counts
@@ -260,7 +266,7 @@ export async function getComplaintLocations(): Promise<Array<{
 }
 
 // Get department performance metrics
-export async function getDepartmentPerformance(): Promise<Array<{
+export async function getDepartmentPerformance(district?: string): Promise<Array<{
   department: string;
   total: number;
   resolved: number;
@@ -282,6 +288,12 @@ export async function getDepartmentPerformance(): Promise<Array<{
 
     snapshot.forEach((doc) => {
       const data = doc.data();
+      
+      // Filter by district if specified
+      if (district && district !== 'all' && data.location?.district !== district) {
+        return; // Skip this complaint
+      }
+      
       const dept = data.department as string;
       
       if (!deptData[dept]) {
@@ -333,13 +345,16 @@ export async function getDepartmentPerformance(): Promise<Array<{
 
 // Get recent activity
 export async function getRecentActivity(
-  limitCount: number = 10
+  limitCount: number = 10,
+  district?: string
 ): Promise<Array<{
   id: string;
   trackingId: string;
   title: string;
   status: ComplaintStatus;
+  priority: Priority;
   department: string;
+  createdAt: Date;
   updatedAt: Date;
 }>> {
   try {
@@ -347,22 +362,36 @@ export async function getRecentActivity(
     const q = query(
       complaintsRef,
       orderBy('updatedAt', 'desc'),
-      limit(limitCount)
+      limit(limitCount * 3) // Get more to filter, then limit
     );
     
     const snapshot = await getDocs(q);
     
-    return snapshot.docs.map(doc => {
-      const data = doc.data();
-      return {
-        id: doc.id,
-        trackingId: data.trackingId,
-        title: data.title,
-        status: data.status,
-        department: data.department,
-        updatedAt: toSafeDate(data.updatedAt) || new Date(),
-      };
-    });
+    const results = snapshot.docs
+      .map(doc => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          trackingId: data.trackingId,
+          title: data.title,
+          status: data.status,
+          priority: data.priority || 'medium',
+          department: data.department,
+          district: data.location?.district,
+          createdAt: toSafeDate(data.createdAt) || new Date(),
+          updatedAt: toSafeDate(data.updatedAt) || new Date(),
+        };
+      })
+      .filter(complaint => {
+        // Filter by district if specified
+        if (district && district !== 'all') {
+          return complaint.district === district;
+        }
+        return true;
+      })
+      .slice(0, limitCount); // Limit after filtering
+    
+    return results;
   } catch (error) {
     console.error('Error getting recent activity:', error);
     return [];

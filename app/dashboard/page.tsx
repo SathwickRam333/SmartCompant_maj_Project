@@ -79,6 +79,8 @@ export default function PublicDashboard() {
   const [isLoading, setIsLoading] = useState(true);
   const [selectedDistrict, setSelectedDistrict] = useState('all');
   const [selectedPeriod, setSelectedPeriod] = useState('month');
+  const [recentStatusFilter, setRecentStatusFilter] = useState('all');
+  const [recentPriorityFilter, setRecentPriorityFilter] = useState('all');
 
   useEffect(() => {
     fetchDashboardData();
@@ -87,11 +89,16 @@ export default function PublicDashboard() {
   const fetchDashboardData = async () => {
     setIsLoading(true);
     try {
+      const districtFilter = selectedDistrict === 'all' ? undefined : selectedDistrict;
+      
       const [statsData, deptData, recentData] = await Promise.all([
-        getDashboardStats(),
-        getDepartmentPerformance(),
-        getRecentActivity(10),
+        getDashboardStats(districtFilter),
+        getDepartmentPerformance(districtFilter),
+        getRecentActivity(10, districtFilter),
       ]);
+      console.log('Recent complaints data:', recentData);
+      console.log('Sample complaint priorities:', recentData.map(c => ({ id: c.trackingId, priority: c.priority })));
+      console.log('District filter applied:', districtFilter || 'all');
       setStats(statsData);
       setDepartmentData(deptData);
       setRecentComplaints(recentData);
@@ -141,6 +148,12 @@ export default function PublicDashboard() {
           { name: 'Others', count: 0 },
         ];
 
+  const filteredRecentComplaints = recentComplaints.filter((complaint) => {
+    const matchesStatus = recentStatusFilter === 'all' || complaint.status === recentStatusFilter;
+    const matchesPriority = recentPriorityFilter === 'all' || complaint.priority === recentPriorityFilter;
+    return matchesStatus && matchesPriority;
+  });
+
   if (isLoading) {
     return (
       <div className="min-h-[80vh] flex items-center justify-center">
@@ -161,6 +174,12 @@ export default function PublicDashboard() {
             <h1 className="text-3xl font-bold text-primary">Public Dashboard</h1>
             <p className="text-gray-600">
               Real-time transparency in grievance resolution
+              {selectedDistrict !== 'all' && (
+                <Badge variant="outline" className="ml-2 text-xs bg-blue-50">
+                  <MapPin className="h-3 w-3 mr-1" />
+                  {selectedDistrict}
+                </Badge>
+              )}
             </p>
           </div>
           <div className="flex gap-3">
@@ -470,16 +489,72 @@ export default function PublicDashboard() {
           <TabsContent value="recent">
             <Card>
               <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Calendar className="h-5 w-5" />
-                  Recent Activity
-                </CardTitle>
-                <CardDescription>Latest complaints and updates</CardDescription>
+                <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                  <div>
+                    <CardTitle className="flex items-center gap-2">
+                      <Calendar className="h-5 w-5" />
+                      Recent Activity
+                    </CardTitle>
+                    <CardDescription>Latest complaints and updates</CardDescription>
+                  </div>
+                  <div className="flex gap-2">
+                    <Select value={recentStatusFilter} onValueChange={setRecentStatusFilter}>
+                      <SelectTrigger className="w-[150px]">
+                        <SelectValue placeholder="All Status" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All Status</SelectItem>
+                        <SelectItem value="submitted">Submitted</SelectItem>
+                        <SelectItem value="under_review">Under Review</SelectItem>
+                        <SelectItem value="in_progress">In Progress</SelectItem>
+                        <SelectItem value="resolved">Resolved</SelectItem>
+                        <SelectItem value="closed">Closed</SelectItem>
+                        <SelectItem value="rejected">Rejected</SelectItem>
+                        <SelectItem value="escalated">Escalated</SelectItem>
+                      </SelectContent>
+                    </Select>
+
+                    <Select value={recentPriorityFilter} onValueChange={setRecentPriorityFilter}>
+                      <SelectTrigger className="w-[140px]">
+                        <SelectValue placeholder="All Priority" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All Priority</SelectItem>
+                        <SelectItem value="high">High</SelectItem>
+                        <SelectItem value="medium">Medium</SelectItem>
+                        <SelectItem value="low">Low</SelectItem>
+                      </SelectContent>
+                    </Select>
+
+                    {(recentStatusFilter !== 'all' || recentPriorityFilter !== 'all') && (
+                      <Button 
+                        variant="outline" 
+                        size="sm"
+                        onClick={() => {
+                          setRecentStatusFilter('all');
+                          setRecentPriorityFilter('all');
+                        }}
+                      >
+                        Reset
+                      </Button>
+                    )}
+                  </div>
+                </div>
               </CardHeader>
               <CardContent>
                 <div className="space-y-4">
-                  {recentComplaints.length > 0 ? (
-                    recentComplaints.map((complaint, index) => (
+                  {/* Debug info - remove after testing */}
+                  {recentComplaints.length > 0 && (
+                    <div className="text-xs bg-blue-50 p-2 rounded border border-blue-200">
+                      <strong>Debug:</strong> Total: {recentComplaints.length} complaints | 
+                      Showing: {filteredRecentComplaints.length} | 
+                      Priorities: {Array.from(new Set(recentComplaints.map(c => c.priority))).join(', ') || 'none'} |
+                      District: {selectedDistrict}
+                    </div>
+                  )}
+                  
+                  {filteredRecentComplaints.length > 0 ? (
+                    filteredRecentComplaints.map((complaint, index) => (
                       <div
                         key={index}
                         className="flex items-start gap-4 p-4 bg-gray-50 rounded-lg"
@@ -497,18 +572,21 @@ export default function PublicDashboard() {
                                 {complaint.trackingId} • {complaint.department}
                               </p>
                             </div>
-                            <Badge
-                              variant="secondary"
-                              className={`${
-                                complaint.status === 'resolved'
-                                  ? 'bg-green-100 text-green-700'
-                                  : complaint.status === 'in_progress'
-                                  ? 'bg-orange-100 text-orange-700'
-                                  : 'bg-blue-100 text-blue-700'
-                              }`}
-                            >
-                              {complaint.status}
-                            </Badge>
+                            <div className="flex flex-col items-end gap-1">
+                              <Badge
+                                variant="secondary"
+                                className={`${
+                                  complaint.status === 'resolved'
+                                    ? 'bg-green-100 text-green-700'
+                                    : complaint.status === 'in_progress'
+                                    ? 'bg-orange-100 text-orange-700'
+                                    : 'bg-blue-100 text-blue-700'
+                                }`}
+                              >
+                                {complaint.status}
+                              </Badge>
+                              <Badge variant="outline">{complaint.priority || 'medium'}</Badge>
+                            </div>
                           </div>
                           <p className="text-xs text-gray-400 mt-1">
                             {formatDate(complaint.createdAt)}
@@ -519,7 +597,7 @@ export default function PublicDashboard() {
                   ) : (
                     <div className="text-center py-12 text-gray-500">
                       <FileText className="h-12 w-12 mx-auto mb-4 text-gray-300" />
-                      <p>No recent activity</p>
+                      <p>No complaints found for selected filters</p>
                     </div>
                   )}
                 </div>

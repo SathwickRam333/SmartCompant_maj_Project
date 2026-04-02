@@ -45,6 +45,26 @@ function normalizeDepartmentName(value?: string): string {
   return raw;
 }
 
+function mapCategoryToDepartment(category?: string): string {
+  const key = (category || '').toLowerCase().trim();
+  const categoryMap: Record<string, string> = {
+    road: 'Roads & Buildings',
+    water: 'Water Supply',
+    electricity: 'Electricity',
+    sanitation: 'Sanitation',
+    healthcare: 'Healthcare',
+    education: 'Education',
+    revenue: 'Revenue',
+    police: 'Police',
+    transport: 'Transport',
+    welfare: 'Social Welfare',
+    corruption: 'Police',
+    other: 'Municipal',
+  };
+
+  return categoryMap[key] || 'Municipal';
+}
+
 // Helper to safely convert Timestamp/Date to valid Date object
 function toSafeDate(value: any): Date {
   if (!value) return new Date();
@@ -82,6 +102,9 @@ export async function createComplaint(
     
     // Get AI classification
     const classification = await classifyComplaint(formData.title, formData.description);
+    const fallbackDepartment = mapCategoryToDepartment(formData.category);
+    const selectedDepartment = (formData.department || '').trim();
+    const finalDepartment = selectedDepartment || fallbackDepartment || classification.department;
     
     // Determine priority based on classification
     const priority: Priority = classification.priority || 'medium';
@@ -107,7 +130,7 @@ export async function createComplaint(
       title: formData.title,
       description: formData.description,
       category: formData.category,
-      department: formData.department || classification.department,
+      department: finalDepartment,
       inputType: formData.inputType,
       location: formData.location,
       attachments,
@@ -117,7 +140,7 @@ export async function createComplaint(
       isOverdue: false,
       escalationLevel: 0,
       aiClassification: {
-        department: classification.department,
+        department: classification.department || fallbackDepartment,
         confidence: classification.confidence,
         keywords: classification.keywords || [],
       },

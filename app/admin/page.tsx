@@ -40,6 +40,7 @@ import {
   Filter,
   Copy,
   Check,
+  Bell,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -85,6 +86,7 @@ import {
 import { getSystemSettings, saveSystemSettings } from '@/services/settings.service';
 import { Complaint, User as UserType, DEPARTMENTS, DISTRICTS, STATUS_LABELS, PRIORITY_LABELS } from '@/lib/types';
 import { formatDate, exportToCSV } from '@/lib/utils';
+import EscalationMonitor from '@/components/admin/EscalationMonitor';
 
 const COLORS = ['#1a472a', '#d4a012', '#3b82f6', '#ef4444', '#8b5cf6', '#06b6d4'];
 
@@ -670,7 +672,7 @@ export default function AdminPanel() {
 
         {/* Main Tabs */}
         <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="grid w-full grid-cols-5 max-w-2xl mb-6">
+          <TabsList className="grid w-full grid-cols-6 max-w-3xl mb-6">
             <TabsTrigger value="overview">
               <BarChart3 className="h-4 w-4 mr-2" />
               Overview
@@ -690,6 +692,10 @@ export default function AdminPanel() {
                   {pendingOfficerRequests.length}
                 </span>
               )}
+            </TabsTrigger>
+            <TabsTrigger value="escalation">
+              <Bell className="h-4 w-4 mr-2" />
+              Escalation
             </TabsTrigger>
             <TabsTrigger value="settings">
               <Settings className="h-4 w-4 mr-2" />
@@ -1100,6 +1106,11 @@ export default function AdminPanel() {
                 )}
               </CardContent>
             </Card>
+          </TabsContent>
+
+          {/* Escalation Tab */}
+          <TabsContent value="escalation" className="space-y-6">
+            <EscalationMonitor />
           </TabsContent>
 
           {/* Settings Tab */}
