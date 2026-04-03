@@ -294,13 +294,11 @@ export async function getOfficerComplaints(
         if (normalizedOfficerDepartment) {
           const normalizedComplaintDepartment = normalizeDepartmentName(complaint.department);
           const departmentMatches = normalizedComplaintDepartment === normalizedOfficerDepartment;
-          const complaintDistrict = (complaint.location?.district || '').toLowerCase().trim();
-          const districtMatches = !normalizedOfficerDistrict || complaintDistrict === normalizedOfficerDistrict;
-          const matches = departmentMatches && districtMatches;
-          console.log(
-            `Complaint ${complaint.id}: dept=${complaint.department}, officer dept=${officerDepartment}, district=${complaint.location?.district}, officer district=${officerDistrict}, matches=${matches}`
-          );
-          return matches;
+          
+          // Note: District filtering removed - officers see ALL complaints from their department
+          // regardless of which district the complaint is from
+          
+          return departmentMatches;
         }
         
         // If officer has no department (maybe admin), show all unassigned
