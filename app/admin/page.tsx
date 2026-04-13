@@ -68,7 +68,7 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Separator } from '@/components/ui/separator';
 import { useToast } from '@/components/ui/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
-import { getAllComplaints } from '@/services/complaints.service';
+import { getAllComplaints, assignComplaintToOfficer } from '@/services/complaints.service';
 import { getDashboardStats, getDepartmentPerformance } from '@/services/stats.service';
 import {
   getAllUsers,
@@ -82,6 +82,7 @@ import {
   approveOfficerRequest,
   rejectOfficerRequest,
   submitOfficerRequest,
+  getOfficersByDepartment,
 } from '@/services/users.service';
 import { getSystemSettings, saveSystemSettings } from '@/services/settings.service';
 import { Complaint, User as UserType, DEPARTMENTS, DISTRICTS, STATUS_LABELS, PRIORITY_LABELS } from '@/lib/types';
@@ -103,6 +104,9 @@ export default function AdminPanel() {
   const [isProcessingRequest, setIsProcessingRequest] = useState<string | null>(null);
   const [selectedComplaint, setSelectedComplaint] = useState<Complaint | null>(null);
   const [isComplaintDetailOpen, setIsComplaintDetailOpen] = useState(false);
+  const [availableOfficers, setAvailableOfficers] = useState<UserType[]>([]);
+  const [selectedOfficerId, setSelectedOfficerId] = useState('');
+  const [isReassigning, setIsReassigning] = useState(false);
   const [isEditUserDialogOpen, setIsEditUserDialogOpen] = useState(false);
   const [isSavingUser, setIsSavingUser] = useState(false);
   const [isDeletingUser, setIsDeletingUser] = useState<string | null>(null);
@@ -332,6 +336,77 @@ export default function AdminPanel() {
       description: 'User record removed from Firestore',
     });
     fetchData();
+  };
+
+  const handleOpenComplaintDetail = async (complaint: Complaint) => {
+    setSelectedComplaint(complaint);
+    setIsComplaintDetailOpen(true);
+    setSelectedOfficerId('');
+    
+    // Fetch available officers for reassignment
+    if (complaint.department) {
+      try {
+        const officers = await getOfficersByDepartment(complaint.department);
+        // Filter out the currently assigned officer and ensure all have displayName
+        const availableOfficersList = officers
+          .filter((officer) => officer.uid !== complaint.assignedOfficerId)
+          .filter((officer) => officer.displayName) as UserType[];
+        setAvailableOfficers(availableOfficersList);
+      } catch (error) {
+        console.error('Failed to fetch officers:', error);
+        setAvailableOfficers([]);
+      }
+    }
+  };
+
+  const handleReassignComplaint = async () => {
+    if (!selectedComplaint || !selectedOfficerId) {
+      toast({
+        title: 'Invalid selection',
+        description: 'Please select an officer to reassign',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    const selectedOfficer = availableOfficers.find(o => o.uid === selectedOfficerId);
+    if (!selectedOfficer) {
+      toast({
+        title: 'Officer not found',
+        description: 'Selected officer is not available',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setIsReassigning(true);
+    try {
+      await assignComplaintToOfficer(
+        selectedComplaint.id,
+        selectedOfficerId,
+        selectedOfficer.displayName || selectedOfficer.email
+      );
+
+      toast({
+        title: 'Complaint reassigned',
+        description: `Assigned to ${selectedOfficer.displayName || selectedOfficer.email}`,
+      });
+
+      setIsComplaintDetailOpen(false);
+      setSelectedComplaint(null);
+      setSelectedOfficerId('');
+      setAvailableOfficers([]);
+      fetchData(); // Refresh data
+    } catch (error) {
+      console.error('Failed to reassign complaint:', error);
+      toast({
+        title: 'Reassignment failed',
+        description: 'Unable to reassign complaint. Please try again.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsReassigning(false);
+    }
   };
 
   const handleCreateOfficer = async () => {
@@ -859,10 +934,7 @@ export default function AdminPanel() {
                             <Button 
                               variant="ghost" 
                               size="sm"
-                              onClick={() => {
-                                setSelectedComplaint(complaint);
-                                setIsComplaintDetailOpen(true);
-                              }}
+                              onClick={() => handleOpenComplaintDetail(complaint)}
                             >
                               <Eye className="h-4 w-4" />
                             </Button>
@@ -1444,6 +1516,49 @@ export default function AdminPanel() {
                     </p>
                   </div>
                 )}
+
+                {/* Reassignment Section - Show for escalated or in_progress complaints */}
+                {['escalated', 'in_progress', 'under_review'].includes(selectedComplaint.status) &&
+                  availableOfficers.length > 0 && (
+                    <div className="border-t pt-4 mt-4">
+                      <Label className="text-gray-700 font-semibold">Reassign Complaint</Label>
+                      <p className="text-sm text-gray-500 mb-3">
+                        Assign this complaint to another officer in the {selectedComplaint.department} department
+                      </p>
+                      <div className="space-y-3">
+                        <div>
+                          <Label className="text-sm">Select Officer</Label>
+                          <Select value={selectedOfficerId} onValueChange={setSelectedOfficerId}>
+                            <SelectTrigger className="w-full mt-1">
+                              <SelectValue placeholder="Choose an officer..." />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {availableOfficers.map((officer) => (
+                                <SelectItem key={officer.uid} value={officer.uid}>
+                                  {officer.displayName || officer.email}
+                                  {officer.district && ` (${officer.district})`}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <Button
+                          onClick={handleReassignComplaint}
+                          disabled={!selectedOfficerId || isReassigning}
+                          className="w-full"
+                        >
+                          {isReassigning ? (
+                            <>
+                              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                              Reassigning...
+                            </>
+                          ) : (
+                            'Reassign Complaint'
+                          )}
+                        </Button>
+                      </div>
+                    </div>
+                  )}
               </div>
             )}
             <DialogFooter>
